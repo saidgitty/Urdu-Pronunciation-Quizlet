@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Urdu Pronunciation Gem</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Light blue-gray background */
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            max-width: 800px;
+            width: 95%;
+            background-color: #ffffff; /* White card background */
+            border-radius: 1rem; /* Rounded corners */
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); /* Soft shadow */
+            padding: 2rem;
+            margin: 2rem 0; /* Add some vertical margin for smaller screens */
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+            border-radius: 0.5rem;
+        }
+        button {
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+        button:hover {
+            transform: translateY(-2px);
+        }
+        .loading-spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6; /* Blue spinner */
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-100">
+
+    <div class="container">
+        <h1 class="text-3xl font-bold text-center text-blue-700">Urdu Pronunciation Gem</h1>
+        <p class="text-gray-700 text-center mb-4">
+            Tell me which Urdu sounds or conversational topics you want to focus on. I'll generate a Quizlet-ready set with transliterations and detailed pronunciation guidance. For example, try: "help me with retroflex T and D sounds," or "common phrases for saying hello and goodbye at home."
+        </p>
+
+        <div class="flex flex-col gap-4">
+            <label for="focusInput" class="text-lg font-medium text-gray-800">Your Focus:</label>
+            <textarea
+                id="focusInput"
+                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-700"
+                placeholder="E.g., dental vs. retroflex 't' sounds, phrases for morning routine, differentiating 'r' sounds."
+            ></textarea>
+            <button
+                id="generateButton"
+                class="w-full bg-blue-600 text-white font-semibold py-3 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center gap-2"
+            >
+                Generate Quizlet Set
+                <span id="loadingSpinner" class="loading-spinner hidden"></span>
+            </button>
+        </div>
+
+        <div id="quizletOutputContainer" class="hidden mt-6">
+            <h2 class="text-2xl font-semibold text-blue-600 mb-4">Your Quizlet Set Content:</h2>
+            <div id="messageBox" class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-lg hidden mb-4" role="alert">
+                <p>Click "Copy to Clipboard" and paste this directly into a Quizlet set using the "Import from Word, Excel, Google Docs, etc." option. Choose space or tab as the separator between term and definition.</p>
+            </div>
+            <textarea
+                id="quizletOutput"
+                class="w-full p-4 border border-gray-300 rounded-lg bg-gray-50 text-gray-800"
+                rows="15"
+                readonly
+            ></textarea>
+            <button
+                id="copyButton"
+                class="mt-4 w-full bg-green-600 text-white font-semibold py-3 rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+            >
+                Copy to Clipboard
+            </button>
+        </div>
+
+        <div class="mt-8 p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 rounded-lg">
+            <h3 class="text-xl font-semibold mb-2">Important Note for Audio:</h3>
+            <p class="text-gray-700">
+                While this tool provides excellent phonetic guidance, the best way to get accurate audio for your Quizlet sets is to have your husband record himself saying the transliterated words and phrases. You can then upload these audio files to your Quizlet cards manually. This ensures authentic native pronunciation for your learning!
+            </p>
+        </div>
+
+    </div>
+
+    <script type="module">
+        // Global variables for Firebase configuration (provided by the Canvas environment)
+        // These are intentionally empty strings if not provided by the environment,
+        // and Canvas will inject the real values at runtime if available.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Gemini API key - leave empty, Canvas will provide at runtime
+        const apiKey = "";
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+        const focusInput = document.getElementById('focusInput');
+        const generateButton = document.getElementById('generateButton');
+        const quizletOutput = document.getElementById('quizletOutput');
+        const quizletOutputContainer = document.getElementById('quizletOutputContainer');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        const messageBox = document.getElementById('messageBox');
+        const copyButton = document.getElementById('copyButton');
+
+        generateButton.addEventListener('click', async () => {
+            const userFocus = focusInput.value.trim();
+            if (!userFocus) {
+                alert('Please enter your focus for the Quizlet set.'); // Using alert here for simplicity, in a full app, use a custom modal.
+                return;
+            }
+
+            // Show loading spinner and disable button
+            generateButton.disabled = true;
+            loadingSpinner.classList.remove('hidden');
+            quizletOutputContainer.classList.add('hidden'); // Hide previous output
+            messageBox.classList.add('hidden'); // Hide message box
+
+            try {
+                // Construct the prompt for Gemini
+                const prompt = `
+                I am learning conversational Urdu and focusing on pronunciation without learning the script.
+                My goal is to create Quizlet sets from your output.
+                Please generate a list of Urdu words/phrases (transliterated only, NO Urdu script) related to "${userFocus}".
+                For each item, provide:
+                1.  The transliterated Urdu word/phrase.
+                2.  Its English translation.
+                3.  A detailed phonetic explanation of any challenging sounds, focusing on:
+                    -   Tongue position
+                    -   Lip position
+                    -   Aspiration (puff of air)
+                    -   Comparison to similar English sounds (or explaining why it's unique)
+                    -   Any minimal pair suggestions to help differentiate.
+                
+                Format the output for easy copying into Quizlet, where each line represents a card.
+                Use a ' | ' (space pipe space) as the separator between the front (Urdu transliteration) and the back (English translation and phonetic explanation).
+                
+                Example format:
+                Din | Day (dental 'd', no aspiration. Tongue tip touches back of upper front teeth, like 'd' in French "donner".)
+                Dabba | Box (retroflex 'D', no aspiration. Tongue curled back, tip touches roof of mouth behind alveolar ridge. Harder, thudding sound.)
+                
+                Ensure the words/phrases are suitable for conversational use, especially for home and family.
+                Provide at least 5-10 distinct items if possible, and up to 15 if the topic allows.
+                `;
+
+                let chatHistory = [];
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                const payload = { contents: chatHistory };
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`API error: ${response.status} - ${errorText}`);
+                }
+
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const text = result.candidates[0].content.parts[0].text;
+                    quizletOutput.value = text;
+                    quizletOutputContainer.classList.remove('hidden');
+                    messageBox.classList.remove('hidden'); // Show message box with instructions
+                } else {
+                    quizletOutput.value = "Sorry, I couldn't generate a Quizlet set based on your request. Please try again with a different focus.";
+                    messageBox.classList.remove('hidden');
+                }
+
+            } catch (error) {
+                console.error("Error generating Quizlet set:", error);
+                quizletOutput.value = "An error occurred while generating the set. Please check your network connection and try again.";
+                messageBox.classList.remove('hidden');
+            } finally {
+                // Hide loading spinner and enable button
+                generateButton.disabled = false;
+                loadingSpinner.classList.add('hidden');
+            }
+        });
+
+        copyButton.addEventListener('click', () => {
+            quizletOutput.select();
+            document.execCommand('copy');
+            // Provide visual feedback for copy
+            copyButton.textContent = 'Copied!';
+            setTimeout(() => {
+                copyButton.textContent = 'Copy to Clipboard';
+            }, 2000);
+        });
+
+        // Initialize and authenticate Firebase (though not strictly needed for this specific app, good practice)
+        // This part is for potential future expansion where data might be stored.
+        // It's included to adhere to general React/HTML Firebase app guidelines.
+        if (Object.keys(firebaseConfig).length > 0) {
+            // Firebase modules are imported via CDN in HTML
+            // For a simple, client-side only app not requiring database,
+            // the Firebase specific code here is minimal.
+            // If you expand to use Firestore, you'd add:
+            // import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+            // import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+            // const app = initializeApp(firebaseConfig);
+            // const auth = getAuth(app);
+            //
+            // async function authenticate() {
+            //     try {
+            //         if (initialAuthToken) {
+            //             await signInWithCustomToken(auth, initialAuthToken);
+            //             console.log("Signed in with custom token.");
+            //         } else {
+            //             await signInAnonymously(auth);
+            //             console.log("Signed in anonymously.");
+            //         }
+            //         // You can get the user ID here if needed: auth.currentUser?.uid
+            //     } catch (error) {
+            //         console.error("Firebase authentication error:", error);
+            //     }
+            // }
+            // authenticate();
+        } else {
+            console.warn("Firebase configuration not found. Some features might be unavailable.");
+        }
+    </script>
+</body>
+</html>
