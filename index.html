@@ -16,7 +16,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, addDoc, onSnapshot, collection, query, deleteDoc, updateDoc, getDocs, where, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         window.firebase = {
             initializeApp,
@@ -35,7 +35,11 @@
             updateDoc,
             getDocs,
             where,
-            writeBatch
+            writeBatch,
+            // Expose Email/Password and SignOut functions
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword,
+            signOut
         };
     </script>
     <style>
@@ -69,7 +73,7 @@
         // Component: App (Main Application Container)
         const App = () => {
             const { useState, useEffect, useCallback, useMemo, useRef } = React;
-            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, doc, onSnapshot, collection, query, addDoc, deleteDoc, updateDoc, getDocs, where, writeBatch } = window.firebase;
+            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, doc, onSnapshot, collection, query, addDoc, deleteDoc, updateDoc, getDocs, where, writeBatch, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } = window.firebase;
 
             const [activeTab, setActiveTab] = useState('generate');
             const [userId, setUserId] = useState(null);
@@ -92,6 +96,11 @@
             const [generationPromptForLoad, setGenerationPromptForLoad] = useState('');
             // State for 'isAdding' content, managed here for all 'Load to...' buttons
             const [isAddingContent, setIsAddingContent] = useState(false);
+
+            // Email/Password Auth states
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [authProcessing, setAuthProcessing] = useState(false);
 
 
             // Firebase configuration for YOUR project (USER-PROVIDED)
@@ -116,17 +125,16 @@
                         const firestore = getFirestore(app);
                         setDb(firestore);
 
-                        // Use a promise to ensure onAuthStateChanged resolves before proceeding
                         const userPromise = new Promise(resolve => {
                             const unsubscribe = onAuthStateChanged(auth, user => {
-                                unsubscribe(); // Unsubscribe after first state change
+                                unsubscribe(); 
                                 resolve(user);
                             });
                         });
 
                         let user = await userPromise;
 
-                        if (!user) { // If no user on initial check, attempt sign-in
+                        if (!user) { 
                             try {
                                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                                     const credential = await signInWithCustomToken(auth, __initial_auth_token);
@@ -136,7 +144,7 @@
                                     user = credential.user;
                                 }
                             } catch (error) {
-                                console.error("Initial sign-in attempt failed, falling back/showing error:", error);
+                                console.error("Initial sign-in attempt failed, trying fallback:", error);
                                 if (error.code === 'auth/invalid-custom-token' || error.code === 'auth/invalid-claims' || error.code === 'auth/custom-token-mismatch') {
                                     showMessage("Custom token invalid or mismatched. Trying anonymous sign-in...", 'info', 3000);
                                     try {
@@ -150,53 +158,48 @@
                                 } else {
                                      showMessage(`Authentication failed: ${error.message}. App may not save data.`, 'error');
                                 }
+                            } finally {
+                                setIsLoading(false); 
                             }
+                        } else { // User was already authenticated (from previous session or successful token/anon sign-in)
+                            setIsLoading(false); 
                         }
                         
-                        if (user) { // If a user (authenticated or anonymous) is now available
+                        if (user) { 
                             setUserId(user.uid);
-                            // Set up data subscriptions only after userId and db are guaranteed
-                            // All subscriptions will now trigger setIsLoading(false) once their data loads.
-                            // We need to ensure that setIsLoading(false) isn't prematurely called if some data loads before others.
-                            // The easiest way is to let all subscriptions initiate, and a final check in useEffect after all setup.
-
-                            onSnapshot(collection(firestore, "artifacts", appId, "users", user.uid, 'vocabulary'), (snapshot) => {
-                                setVocabulary(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                            }, (error) => {
-                                console.error(`Error fetching vocabulary: `, error);
-                                showMessage("Failed to load vocabulary.", 'error');
-                            });
                             
-                            onSnapshot(collection(firestore, "artifacts", appId, "users", user.uid, 'dialogues'), (snapshot) => {
-                                setDialogues(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                            }, (error) => {
-                                console.error(`Error fetching dialogues: `, error);
-                                showMessage("Failed to load dialogues.", 'error');
-                            });
+                            const unsubscribes = [];
 
-                            onSnapshot(collection(firestore, "artifacts", appId, "users", user.uid, 'grammar'), (snapshot) => {
-                                setGrammar(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                            }, (error) => {
-                                console.error(`Error fetching grammar: `, error);
-                                showMessage("Failed to load grammar.", 'error');
-                            });
+                            const setupCollectionListener = (colName, setter) => {
+                                const q = query(collection(firestore, "artifacts", appId, "users", user.uid, colName));
+                                const unsubscribe = onSnapshot(q, (snapshot) => {
+                                    setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                                }, (error) => {
+                                    console.error(`Error fetching ${colName}: `, error);
+                                    showMessage(`Failed to load ${colName}.`, 'error');
+                                });
+                                unsubscribes.push(unsubscribe);
+                            };
 
-                            // Set isLoading to false after a very short delay to allow all initial subscriptions to attempt to fetch
-                            // This is a pragmatic approach for initial render vs. complex Promise.all for all subscriptions
-                            setTimeout(() => setIsLoading(false), 500); 
+                            setupCollectionListener('vocabulary', setVocabulary);
+                            setupCollectionListener('dialogues', setDialogues);
+                            setupCollectionListener('grammar', setGrammar);
+
+                            return () => unsubscribes.forEach(unsub => unsub());
 
                         } else {
-                            setIsLoading(false); // If no user, and no fallback worked, stop loading
+                            // If, after all attempts, user is still null, ensure isLoading is false
+                            setIsLoading(false); 
                         }
                     } catch (e) {
-                        console.error("Firebase initialization error:", e);
-                        showMessage("Could not initialize the application.", 'error');
+                        console.error("Firebase initialization error (top level):", e);
+                        showMessage("Could not initialize the application. Check console for details.", 'error');
                         setIsLoading(false);
                     }
                 };
 
                 initFirebase();
-            }, []); // Empty dependency array means this runs once on mount
+            }, []);
 
             // Global Message Box handler
             const showMessage = (text, type = 'info', duration = 4000) => {
@@ -250,14 +253,14 @@
                 setIsAddingContent(true); 
 
                 const parsedItems = [];
-                // Split by double newline to separate items, then filter out empty blocks
+                // Split by two newlines to reliably separate item blocks
                 const itemBlocks = geminiOutputContent.split(/\n\s*\n/).filter(block => block.trim().length > 0);
                 
                 itemBlocks.forEach(block => {
                     const lines = block.split('\n');
                     let item = { english: '', urdu: '', notes: '', mastery: "Never Seen", batchName: inputBatchName };
                     
-                    let currentField = ''; // Keep track of current field being parsed
+                    let currentField = ''; 
                     lines.forEach(line => {
                         const trimmedLine = line.trim();
                         if (trimmedLine.startsWith('English:')) {
@@ -271,19 +274,20 @@
                             currentField = 'notes';
                         } else if (currentField && trimmedLine.length > 0) { // Continuation of a previous field
                             if (currentField === 'notes') {
-                                item.notes += '\n' + trimmedLine; // Append to notes
+                                item.notes += '\n' + trimmedLine; // Append to notes, preserving newlines
                             } else if (currentField === 'urdu') {
-                                // This might catch extra lines in Urdu if not exactly "script (transliteration)"
-                                item.urdu += ' ' + trimmedLine; 
+                                item.urdu += ' ' + trimmedLine; // Append to Urdu if it's on a second line for some reason (less strict)
                             } else if (currentField === 'english') {
-                                // This case typically shouldn't happen for English if format is strict, but for robustness
-                                item.english += ' ' + trimmedLine;
+                                item.english += ' ' + trimmedLine; // Same for English
                             }
                         }
                     });
                     
                     if (item.english && item.urdu) { 
                         parsedItems.push(item);
+                    } else {
+                        // Log skipped malformed item for debugging
+                        console.warn("Skipped malformed item during parsing:", block);
                     }
                 });
 
@@ -576,7 +580,7 @@
                  const fullPrompt = `
                     You are an expert language teacher specializing in Hyderabadi Urdu for non-script learners. 
                     Based on the user's request, generate a list of items formatted for easy parsing.
-                    Each item must have an "English:", "Urdu:" (containing **BOTH the Urdu script AND its transliteration, like this: "Urdu: سلام (Salam)**"), and "Notes:" field on separate lines.
+                    Each item must have an "English:", "Urdu:" (containing **BOTH the Urdu script AND its transliteration, like this: "Urdu: سلام (Salam)".**
                     The "Notes:" field MUST contain **concise phonetic hints (only for challenging sounds for English speakers, avoid redundant notes like "X sounds like X in English"). Focus on tongue placement, aspiration, and specific comparisons (e.g., American English 'd', French 'r'). Also include contextual usage notes (e.g., 'Palang' for general bed vs. 'Bister' for beddings/sleeping setup) where words have nuanced meanings or usage scenarios.**
                     Each item must also include any relevant grammar rule explanations, concisely presented.
 
@@ -614,9 +618,8 @@
                     showMessage("No generated content to load. Please generate content first.", "info");
                     return;
                 }
-                // Check if db and userId are ready BEFORE showing modal
                 if (!db || !userId) {
-                    showMessage("Database not ready or user not authenticated. Please wait for the app to initialize.", "error");
+                    showMessage("Database not ready or user not authenticated. Please wait.", "error");
                     return;
                 }
                 setCurrentCollectionToLoad(collectionName); 
@@ -660,10 +663,9 @@
                              </div>
                              {!localIsGenerating && localGeminiOutput && (
                                 <div className="mt-4 flex flex-wrap gap-2">
-                                    {/* These buttons are disabled if isAddingContent (global state) is true */}
-                                    <button onClick={() => initiateLoadProcess('vocabulary')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">Load to Vocabulary</button>
-                                    <button onClick={() => initiateLoadProcess('dialogues')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">Load to Dialogues</button>
-                                    <button onClick={() => initiateLoadProcess('grammar')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">Load to Grammar Examples</button>
+                                    <button onClick={() => initiateLoadProcess('vocabulary')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:bg-gray-400">Load to Vocabulary</button>
+                                    <button onClick={() => initiateLoadProcess('dialogues')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:bg-gray-400">Load to Dialogues</button>
+                                    <button onClick={() => initiateLoadProcess('grammar')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:bg-gray-400">Load to Grammar Examples</button>
                                     {isAddingContent && <div className="spinner"></div>} 
                                 </div>
                              )}
@@ -1102,4 +1104,5 @@
     </script>
 </body>
 </html>
+
 
