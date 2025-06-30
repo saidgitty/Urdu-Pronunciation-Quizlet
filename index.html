@@ -1,1155 +1,1337 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hyderabadi Urdu Quizlet Builder</title>
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import { initializeApp } from 'firebase/app';
+import {
+  getAuth,
+  signInAnonymously,
+  signInWithCustomToken,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged
+} from 'firebase/auth';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  query,
+  onSnapshot,
+  where,
+  getDocs
+} from 'firebase/firestore';
+
+// Global variables provided by the Canvas environment
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+// Create a context for Firebase services and user data
+const AppContext = createContext(null);
+
+// Custom hook to use the app context
+const useAppContext = () => useContext(AppContext);
+
+// Utility function to generate a unique ID (for non-authenticated users or new items)
+const generateUniqueId = () => crypto.randomUUID();
+
+// Function to replace internal newlines with '//' for Quizlet export
+const formatNotesForQuizlet = (notes) => {
+  return notes ? notes.replace(/\n/g, ' // ') : '';
+};
+
+// Mastery Levels
+const MASTERY_LEVELS = [
+  'Never Seen',
+  'Familiar',
+  'Getting Close',
+  'Mastered',
+];
+
+// Main App Component
+const App = () => {
+  const [firebaseApp, setFirebaseApp] = useState(null);
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [userEmail, setUserEmail] = useState(null);
+
+  // Initialize Firebase and set up authentication listener
+  useEffect(() => {
+    try {
+      const app = initializeApp(firebaseConfig);
+      const firestore = getFirestore(app);
+      const firebaseAuth = getAuth(app);
+
+      setFirebaseApp(app);
+      setDb(firestore);
+      setAuth(firebaseAuth);
+
+      // Set up auth state change listener
+      const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+        if (user) {
+          // User is signed in
+          setUserId(user.uid);
+          setUserEmail(user.email);
+          console.log('User signed in:', user.uid);
+        } else {
+          // User is signed out or not yet signed in
+          console.log('No user signed in. Attempting anonymous sign-in...');
+          try {
+            if (initialAuthToken) {
+              await signInWithCustomToken(firebaseAuth, initialAuthToken);
+              console.log('Signed in with custom token.');
+            } else {
+              await signInAnonymously(firebaseAuth);
+              console.log('Signed in anonymously.');
+            }
+          } catch (error) {
+            console.error('Error during initial sign-in:', error);
+            // Fallback: If anonymous sign-in fails, use a random ID for this session
+            setUserId(generateUniqueId());
+            setUserEmail(null);
+          }
+        }
+        setIsAuthReady(true);
+      });
+
+      // Cleanup subscription on unmount
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('Error initializing Firebase:', error);
+      setIsAuthReady(true); // Mark ready even on error to avoid infinite loading
+    }
+  }, []);
+
+  // Provide the context value to children
+  const contextValue = { firebaseApp, db, auth, userId, isAuthReady, userEmail, setUserEmail };
+
+  if (!isAuthReady) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="text-lg text-gray-700">Loading application...</div>
+      </div>
+    );
+  }
+
+  return (
+    <AppContext.Provider value={contextValue}>
+      <div className="min-h-screen bg-gray-100 font-inter text-gray-800">
+        <Header />
+        <MainContent />
+      </div>
+    </AppContext.Provider>
+  );
+};
+
+// Header Component with Auth
+const Header = () => {
+  const { auth, userId, userEmail, setUserEmail } = useAppContext();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState('signIn'); // 'signIn' or 'signUp'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
+
+  const handleAuthAction = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthMessage('');
+    try {
+      if (authMode === 'signIn') {
+        await signInWithEmailAndPassword(auth, email, password);
+        setAuthMessage('Signed in successfully!');
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+        setAuthMessage('Account created and signed in successfully!');
+      }
+      setShowAuthModal(false);
+      setEmail('');
+      setPassword('');
+    } catch (error) {
+      console.error('Authentication error:', error);
+      setAuthError(error.message);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      setAuthMessage('Signed out successfully. You are now signed in anonymously.');
+      setUserEmail(null); // Clear email on sign out
+    } catch (error) {
+      console.error('Sign out error:', error);
+      setAuthError(error.message);
+    }
+  };
+
+  return (
+    <header className="bg-gradient-to-r from-blue-600 to-purple-700 p-4 shadow-lg rounded-b-lg">
+      <div className="container mx-auto flex justify-between items-center">
+        <h1 className="text-3xl font-bold text-white tracking-wide">
+          Hyderabadi Urdu Learning Assistant
+        </h1>
+        <div className="flex items-center space-x-4">
+          {userEmail ? (
+            <>
+              <span className="text-white text-sm md:text-base">Welcome, {userEmail}</span>
+              <button
+                onClick={handleSignOut}
+                className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+              >
+                Sign Out
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-white text-sm md:text-base">
+                User ID: <span className="font-mono text-xs md:text-sm bg-blue-700 px-2 py-1 rounded-md">{userId}</span>
+              </span>
+              <button
+                onClick={() => { setShowAuthModal(true); setAuthMode('signIn'); setAuthError(''); setAuthMessage(''); }}
+                className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+              >
+                Sign In / Sign Up
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+              {authMode === 'signIn' ? 'Sign In' : 'Sign Up'}
+            </h2>
+            <form onSubmit={handleAuthAction} className="space-y-4">
+              <div>
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="email">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  id="email"
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="password">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  id="password"
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+              {authError && <p className="text-red-500 text-sm italic">{authError}</p>}
+              {authMessage && <p className="text-green-500 text-sm italic">{authMessage}</p>}
+              <div className="flex items-center justify-between mt-6">
+                <button
+                  type="submit"
+                  className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105"
+                >
+                  {authMode === 'signIn' ? 'Sign In' : 'Sign Up'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuthMode(authMode === 'signIn' ? 'signUp' : 'signIn')}
+                  className="inline-block align-baseline font-bold text-sm text-blue-500 hover:text-blue-800"
+                >
+                  {authMode === 'signIn' ? 'Need an account? Sign Up' : 'Already have an account? Sign In'}
+                </button>
+              </div>
+            </form>
+            <button
+              onClick={() => setShowAuthModal(false)}
+              className="mt-6 w-full bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+};
+
+// Main Content Area
+const MainContent = () => {
+  const [activeTab, setActiveTab] = useState('generate'); // 'generate', 'vocabulary', 'dialogues', 'grammarExamples'
+
+  return (
+    <div className="container mx-auto p-4 md:p-6 lg:p-8 mt-6 bg-white rounded-xl shadow-xl">
+      <div className="flex border-b border-gray-200">
+        <TabButton tabName="generate" currentTab={activeTab} setActiveTab={setActiveTab}>
+          Generate Content
+        </TabButton>
+        <TabButton tabName="vocabulary" currentTab={activeTab} setActiveTab={setActiveTab}>
+          Vocabulary
+        </TabButton>
+        <TabButton tabName="dialogues" currentTab={activeTab} setActiveTab={setActiveTab}>
+          Dialogues
+        </TabButton>
+        <TabButton tabName="grammarExamples" currentTab={activeTab} setActiveTab={setActiveTab}>
+          Grammar Examples
+        </TabButton>
+      </div>
+
+      <div className="py-6">
+        {activeTab === 'generate' && <ContentGenerationTab />}
+        {activeTab === 'vocabulary' && <LearningWorkbenchTab type="vocabulary" />}
+        {activeTab === 'dialogues' && <LearningWorkbenchTab type="dialogues" />}
+        {activeTab === 'grammarExamples' && <LearningWorkbenchTab type="grammarExamples" />}
+      </div>
+    </div>
+  );
+};
+
+// Reusable Tab Button
+const TabButton = ({ tabName, currentTab, setActiveTab, children }) => (
+  <button
+    className={`py-3 px-6 text-lg font-medium rounded-t-lg transition duration-300 ease-in-out ${
+      currentTab === tabName
+        ? 'bg-blue-500 text-white shadow-md'
+        : 'text-gray-700 hover:bg-gray-200 hover:text-blue-600'
+    }`}
+    onClick={() => setActiveTab(tabName)}
+  >
+    {children}
+  </button>
+);
+
+// Content Generation Tab
+const ContentGenerationTab = () => {
+  const { db, userId } = useAppContext();
+  const [prompt, setPrompt] = useState('');
+  const [generatedContent, setGeneratedContent] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [batchName, setBatchName] = useState('');
+  const [itemsToLoad, setItemsToLoad] = useState([]);
+  const [contentIdeasLoading, setContentIdeasLoading] = useState(false);
+
+  // Function to call Gemini API for content generation
+  const generateContent = async () => {
+    if (!prompt.trim()) {
+      setError('Please enter a prompt.');
+      return;
+    }
+    setIsLoading(true);
+    setError('');
+    setMessage('');
+    setGeneratedContent([]);
+
+    // Construct the prompt for Gemini
+    const systemInstruction = `You are an expert in conversational Hyderabadi Urdu for home and family use, especially for teaching a young child. Generate learning materials with precise phonetic hints and concise grammar/contextual notes. Always provide formal sentence structures.
     
-    <!-- Chosen Palette: Warm Neutrals (e.g., beige, cream) with a calming teal accent. -->
-    <!-- Application Structure Plan: A tab-based SPA. Tab 1 for AI content generation. Tabs 2-4 are persistent libraries for Vocabulary, Dialogues, and Grammar, respectively, stored in Firestore. These library tabs allow for review, editing, and in-session practice (flashcards for vocab). Each library tab has a dedicated Quizlet export function. This structure separates the creative/generation task from the curation/practice tasks, providing a clear and efficient user workflow. -->
-    <!-- Visualization & Content Choices: The primary 'visualization' is the interactive content library. Goal: Organize & Curate. Method: Editable lists with mastery dropdowns. Interaction: Direct text editing, selection from dropdowns, deletion. Goal: Practice. Method: Interactive Flashcard (CSS flip). Interaction: Click to flip, button navigation. Goal: Export. Method: Button to copy formatted text. Interaction: Click to copy. All implementation via React/JS within the HTML file. No Chart.js/Plotly/SVG/Mermaid. -->
-    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    Output format for each item:
+    {
+      "urduScriptTransliteration": "Urdu: سلام (Salam)",
+      "englishTranslation": "Hello",
+      "notes": "Phonetic hints (tongue/lip position, aspiration, comparisons to English/French/Spanish sounds if unique). Grammar rule explanation if applicable. Contextual usage notes for nuanced words."
+    }
+    
+    Ensure all phonetic hints are concise and focus only on sounds likely to be incorrect for an English speaker. Avoid redundant descriptions. For grammar rules, explain the rule shown in that specific phrase/sentence concisely. For contextual usage, provide insights into how, when, or where each word is typically used, especially for vocabulary items.`;
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, linkWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, addDoc, onSnapshot, collection, query, deleteDoc, updateDoc, getDocs, where, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        window.firebase = {
-            initializeApp,
-            getAuth,
-            signInAnonymously,
-            onAuthStateChanged,
-            createUserWithEmailAndPassword,
-            signInWithEmailAndPassword,
-            signOut,
-            linkWithCredential, // Expose for linking anonymous to email
-            EmailAuthProvider,   // Expose EmailAuthProvider for linking
-            getFirestore,
-            doc,
-            setDoc,
-            addDoc,
-            onSnapshot,
-            collection,
-            query,
-            deleteDoc,
-            updateDoc,
-            getDocs,
-            where,
-            writeBatch
-        };
-    </script>
-    <style>
-        /* Base styles */
-        body { font-family: 'Inter', sans-serif; }
-        /* Flashcard styles */
-        .flashcard-container { perspective: 1000px; }
-        .flashcard-inner { position: relative; width: 100%; height: 100%; text-align: center; transition: transform 0.6s; transform-style: preserve-3d; }
-        .flashcard-container.flipped .flashcard-inner { transform: rotateY(180deg); }
-        .flashcard-front, .flashcard-back { position: absolute; width: 100%; height: 100%; -webkit-backface-visibility: hidden; backface-visibility: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; border-radius: 1.5rem; background-color: white; border: 1px solid #e5e7eb; }
-        .flashcard-back { transform: rotateY(180deg); }
-        /* Spinner styles */
-        .spinner { border: 4px solid rgba(0, 0, 0, 0.1); width: 36px; height: 36px; border-radius: 50%; border-left-color: #0d9488; animation: spin 1s ease infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        /* Modal styles */
-        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
-        .modal-content { background-color: white; padding: 2rem; border-radius: 0.75rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); max-width: 500px; width: 90%; }
-    </style>
-</head>
-<body class="bg-stone-50 antialiased">
-    <div id="root"></div>
-    <script type="text/babel">
-        // Mastery levels definition
-        const MASTERY_LEVELS = [
-            { value: "Never Seen", label: 'Never Seen' },
-            { value: "Familiar", label: 'Familiar' },
-            { value: "Getting Close", label: 'Getting Close' },
-            { value: "Mastered", label: 'Mastered' },
-        ];
+    const userPrompt = `Generate content based on the following request, formatted as a JSON array of objects as specified in the system instruction: "${prompt}"`;
 
-        // Component: App (Main Application Container)
-        const App = () => {
-            const { useState, useEffect, useCallback, useMemo, useRef } = React;
-            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, linkWithCredential, EmailAuthProvider, getFirestore, doc, onSnapshot, collection, query, addDoc, deleteDoc, updateDoc, getDocs, where, writeBatch } = window.firebase;
+    let chatHistory = [];
+    chatHistory.push({ role: "user", parts: [{ text: systemInstruction }, { text: userPrompt }] });
 
-            const [activeTab, setActiveTab] = useState('generate');
-            const [userId, setUserId] = useState(null);
-            const [db, setDb] = useState(null);
-            
-            const [message, setMessage] = useState({ text: '', type: 'info' });
-            
-            const [vocabulary, setVocabulary] = useState([]);
-            const [dialogues, setDialogues] = useState([]);
-            const [grammar, setGrammar] = useState([]);
+    const payload = {
+      contents: chatHistory,
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              "urduScriptTransliteration": { "type": "STRING" },
+              "englishTranslation": { "type": "STRING" },
+              "notes": { "type": "STRING" }
+            },
+            "propertyOrdering": ["urduScriptTransliteration", "englishTranslation", "notes"]
+          }
+        }
+      }
+    };
 
-            const [isLoading, setIsLoading] = useState(true); // Initial loading for Firebase data
+    const apiKey = ""; // API key will be provided by Canvas runtime
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-            const [showBatchNameModal, setShowBatchNameModal] = useState(false);
-            const [currentCollectionToLoad, setCurrentCollectionToLoad] = useState('');
-            const batchNameInputRef = useRef(null);
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-            // States for content generation tab's local control and passing to modal
-            const [generatedOutputForLoad, setGeneratedOutputForLoad] = useState('');
-            const [generationPromptForLoad, setGenerationPromptForLoad] = useState('');
-            // State for 'isAdding' content, managed here for all 'Load to...' buttons
-            const [isAddingContent, setIsAddingContent] = useState(false);
+      const result = await response.json();
 
-            // Email/Password Auth states
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
-            const [authProcessing, setAuthProcessing] = useState(false); // For disabling auth buttons
+      if (result.candidates && result.candidates.length > 0 &&
+          result.candidates[0].content && result.candidates[0].content.parts &&
+          result.candidates[0].content.parts.length > 0) {
+        const jsonString = result.candidates[0].content.parts[0].text;
+        const parsedContent = JSON.parse(jsonString);
+        setGeneratedContent(parsedContent);
+        setMessage('Content generated successfully! Review and load to your library.');
+      } else {
+        setError('Failed to generate content. Please try a different prompt.');
+        console.error('Gemini API response error:', result);
+      }
+    } catch (err) {
+      setError(`Error generating content: ${err.message}. Please check your prompt and try again.`);
+      console.error('Fetch error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  // Function to suggest content ideas based on existing library
+  const suggestContentIdeas = async () => {
+    if (!userId || !db) {
+      setError('User not authenticated or database not ready.');
+      return;
+    }
+    setContentIdeasLoading(true);
+    setError('');
+    setMessage('');
 
-            // Firebase configuration for YOUR project (USER-PROVIDED)
-            const firebaseConfig = {
-                apiKey: "AIzaSyD2CEqxNwXCia44M5PZfFNoJcv46f0EaEI",
-                authDomain: "productivity-planning-db833.firebaseapp.com",
-                projectId: "productivity-planning-db833",
-                storageBucket: "productivity-planning-db833.firebasestorage.app",
-                messagingSenderId: "579472444851",
-                appId: "1:579472444851:web:2d0576d2192287d3e1cfc6"
-            };
+    try {
+      const vocabSnapshot = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/vocabulary`));
+      const dialoguesSnapshot = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/dialogues`));
+      const grammarSnapshot = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/grammarExamples`));
 
-            // __app_id variable is provided by the environment, use a default if not defined
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'urdu-quizlet-builder-default';
-            
-            // Firebase Initialization and Authentication Logic
-            useEffect(() => {
-                const initFirebase = async () => {
-                    try {
-                        const app = initializeApp(firebaseConfig);
-                        const auth = getAuth(app);
-                        const firestore = getFirestore(app);
-                        setDb(firestore);
+      const existingContent = {
+        vocabulary: vocabSnapshot.docs.map(doc => doc.data()),
+        dialogues: dialoguesSnapshot.docs.map(doc => doc.data()),
+        grammarExamples: grammarSnapshot.docs.map(doc => doc.data()),
+      };
 
-                        // Ensure an anonymous user is signed in to always have a UID for Firestore access
-                        // This bypasses __initial_auth_token issues and provides a consistent base.
-                        try {
-                            const currentAuthUser = auth.currentUser;
-                            if (currentAuthUser && !currentAuthUser.isAnonymous) {
-                                // User already signed in with a persistent method (e.g., email/password from previous session)
-                                console.log("User already signed in with persistent method. UID:", currentAuthUser.uid);
-                                setUserId(currentAuthUser.uid);
-                            } else if (currentAuthUser && currentAuthUser.isAnonymous) {
-                                // User is already anonymously signed in (from previous session)
-                                console.log("User already anonymously signed in. UID:", currentAuthUser.uid);
-                                setUserId(currentAuthUser.uid);
-                            }
-                             else {
-                                // No user signed in, initiate anonymous sign-in
-                                console.log("No user signed in. Attempting anonymous sign-in.");
-                                const credential = await signInAnonymously(auth);
-                                console.log("Anonymous sign-in successful. UID:", credential.user.uid);
-                                setUserId(credential.user.uid);
-                                showMessage("Signed in anonymously. Your data will persist on this device.", 'success');
-                            }
-                        } catch (error) {
-                            console.error("Initial authentication attempt (anonymous) failed:", error);
-                            showMessage("Failed to sign in. App may not save data. Check Firebase config and rules.", 'error');
-                            // If anonymous sign-in fails, userId remains null, and the app will operate without persistence.
-                        } finally {
-                            setIsLoading(false); // Global loading ends after initial auth attempt
-                        }
-                        
-                        // Set up Firestore subscriptions based on userId and db.
-                        // These will trigger when userId is set after successful authentication.
-                        // onAuthStateChanged is still important if a user switches from anonymous to email/password later
-                        onAuthStateChanged(auth, (user) => {
-                            if (user) {
-                                setUserId(user.uid); // Update userId if it changes (e.g., anonymous links to email)
-                            } else {
-                                setUserId(null); // Clear userId if truly signed out
-                            }
-                        });
+      const existingContentSummary = `Existing vocabulary: ${existingContent.vocabulary.map(v => v.englishTranslation).join(', ')}.
+      Existing dialogues: ${existingContent.dialogues.map(d => d.englishTranslation).join(', ')}.
+      Existing grammar examples: ${existingContent.grammarExamples.map(g => g.englishTranslation).join(', ')}.`;
+
+      const systemInstruction = `You are an intelligent assistant for a Hyderabadi Urdu learning app. Based on the user's existing learning library, suggest new and relevant content ideas for vocabulary, dialogues, or grammar examples. Avoid suggesting content that is already present. Provide 3-5 distinct ideas.`;
+
+      const userPrompt = `Given the user's current learning progress and existing content:
+      ${existingContentSummary}
+      
+      Suggest new ideas for Hyderabadi Urdu learning content. Focus on conversational, family-oriented topics, especially for interacting with a child. Provide concise suggestions.`;
+
+      let chatHistory = [];
+      chatHistory.push({ role: "user", parts: [{ text: systemInstruction }, { text: userPrompt }] });
+
+      const payload = {
+        contents: chatHistory,
+        generationConfig: {
+          responseMimeType: "text/plain", // Request plain text for ideas
+        }
+      };
+
+      const apiKey = "";
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json();
+
+      if (result.candidates && result.candidates.length > 0 &&
+          result.candidates[0].content && result.candidates[0].content.parts &&
+          result.candidates[0].content.parts.length > 0) {
+        const ideas = result.candidates[0].content.parts[0].text;
+        setPrompt(ideas); // Populate prompt with ideas
+        setMessage('Here are some content ideas based on your library. Feel free to edit the prompt!');
+      } else {
+        setError('Failed to get content ideas. Please try again.');
+        console.error('Gemini API response error for ideas:', result);
+      }
+    } catch (err) {
+      setError(`Error fetching content ideas: ${err.message}`);
+      console.error('Fetch error for ideas:', err);
+    } finally {
+      setContentIdeasLoading(false);
+    }
+  };
 
 
-                        // Setup live data subscriptions only if userId is available (from initial sign-in or later changes)
-                        // This ensures subscriptions always use the correct UID.
-                        const unsubscribes = [];
-                        if (userId && db) { // This will now be true after the initial anonymous sign-in
-                            const setupCollectionListener = (colName, setter) => {
-                                const q = query(collection(firestore, "artifacts", appId, "users", userId, colName));
-                                const unsubscribe = onSnapshot(q, (snapshot) => {
-                                    setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                                }, (error) => {
-                                    console.error(`Error fetching ${colName}: `, error);
-                                    showMessage(`Failed to load ${colName}.`, 'error');
-                                });
-                                return unsubscribe;
-                            };
+  // Function to load generated content to a specific type (vocabulary, dialogues, grammarExamples)
+  const handleLoadToLibrary = async (type) => {
+    if (!userId || !db) {
+      setError('User not authenticated or database not ready.');
+      return;
+    }
+    setItemsToLoad(generatedContent.map(item => ({ ...item, type })));
+    setShowBatchModal(true);
+  };
 
-                            unsubscribes.push(setupCollectionListener('vocabulary', setVocabulary));
-                            unsubscribes.push(setupCollectionListener('dialogues', setDialogues));
-                            unsubscribes.push(setupCollectionListener('grammar', setGrammar));
-                        }
+  // Confirm batch name and add items to Firestore
+  const confirmBatchLoad = async () => {
+    if (!batchName.trim()) {
+      setError('Batch name cannot be empty.');
+      return;
+    }
 
-                        // Cleanup subscriptions on component unmount
-                        return () => unsubscribes.forEach(unsub => unsub());
+    setShowBatchModal(false);
+    setIsLoading(true);
+    setError('');
+    setMessage('');
 
-                    } catch (e) {
-                        console.error("Firebase initialization error (top level):", e);
-                        showMessage("Could not initialize the application. Check console for details.", 'error');
-                        setIsLoading(false);
-                    }
-                };
+    let duplicatesSkipped = 0;
+    const itemsAdded = [];
 
-                initFirebase();
-            }, [userId]); // Depend on userId to re-run subscriptions if user changes
+    for (const item of itemsToLoad) {
+      const collectionRef = collection(db, `artifacts/${appId}/users/${userId}/${item.type}`);
+      const q = query(
+        collectionRef,
+        where('englishTranslation', '==', item.englishTranslation),
+        where('urduScriptTransliteration', '==', item.urduScriptTransliteration)
+      );
+      const querySnapshot = await getDocs(q);
 
-            // Global Message Box handler
-            const showMessage = (text, type = 'info', duration = 4000) => {
-                setMessage({ text, type });
-                setTimeout(() => setMessage({ text: '', type: 'info' }), duration);
-            };
-            
-            // Add/Update/Delete functions for Firestore
-            const handleAddItem = async (collectionName, itemData) => {
-                if (!db || !userId) { showMessage("Database not ready or user not authenticated.", "error"); return; }
-                try {
-                    await addDoc(collection(db, "artifacts", appId, "users", userId, collectionName), itemData);
-                    showMessage(`${collectionName.slice(0, -1)} added successfully!`, 'success');
-                } catch (e) {
-                    console.error("Error adding document: ", e);
-                    showMessage(`Failed to add ${collectionName.slice(0, -1)}.`, 'error');
-                }
-            };
-            
-            const handleUpdateItem = async (collectionName, id, updatedData) => {
-                if (!db || !userId) { showMessage("Database not ready or user not authenticated.", "error"); return; }
-                try {
-                    const itemRef = doc(db, "artifacts", appId, "users", userId, collectionName, id);
-                    await updateDoc(itemRef, updatedData);
-                    showMessage(`Item updated!`, 'success', 1500); 
-                } catch (e) {
-                    console.error("Error updating document: ", e);
-                    showMessage(`Failed to update ${collectionName.slice(0, -1)}.`, 'error');
-                }
-            };
+      if (querySnapshot.empty) {
+        try {
+          await addDoc(collectionRef, {
+            ...item,
+            batchName: batchName,
+            masteryLevel: 'Never Seen', // Default mastery level
+            createdAt: new Date(),
+          });
+          itemsAdded.push(item);
+        } catch (err) {
+          console.error(`Error adding item to ${item.type}:`, err);
+          setError(`Failed to add some items. Check console for details.`);
+        }
+      } else {
+        duplicatesSkipped++;
+      }
+    }
 
-            const handleDeleteItem = async (collectionName, id) => {
-                if (!db || !userId) { showMessage("Database not ready or user not authenticated.", "error"); return; }
-                try {
-                    await deleteDoc(doc(db, "artifacts", appId, "users", userId, collectionName, id));
-                    showMessage(`${collectionName.slice(0, -1)} deleted.`, 'success');
-                }
-                catch (e) {
-                    console.error("Error deleting document: ", e);
-                    showMessage(`Failed to delete ${collectionName.slice(0, -1)}.`, 'error');
-                }
-            };
+    setGeneratedContent([]); // Clear generated content after loading
+    setPrompt(''); // Clear prompt
+    setBatchName(''); // Clear batch name
+    setIsLoading(false);
+    setMessage(`Successfully added ${itemsAdded.length} items to your library. ${duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicates skipped.` : ''}`);
+  };
 
-            // This function handles the actual loading of content after batch name is confirmed
-            const performLoadContent = useCallback(async (collectionName, inputBatchName, geminiOutputContent, setLocalGeminiOutput, setLocalPrompt) => {
-                if (!db || !userId) { 
-                    showMessage("Database not ready or user not authenticated. Please wait and try again.", "error"); 
-                    setIsAddingContent(false); 
-                    return; 
-                }
-                setIsAddingContent(true); 
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-semibold text-gray-800">Intelligent Content Generation</h2>
+      <div className="p-6 bg-blue-50 border border-blue-200 rounded-lg shadow-inner">
+        <p className="text-blue-800 text-sm">
+          Enter a natural language prompt (e.g., "Give me 10 words about kitchen items with phonetic notes," "Explain how to form past tense sentences with 'to eat' and 'to drink'," "Provide 5 sentences for talking to a child about bedtime, with transliterations and notes.").
+        </p>
+      </div>
+      <textarea
+        className="w-full p-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[120px] resize-y"
+        placeholder="Enter your content generation prompt here..."
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows="4"
+      ></textarea>
+      <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-4">
+        <button
+          onClick={generateContent}
+          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center"
+          disabled={isLoading || contentIdeasLoading}
+        >
+          {isLoading ? (
+            <svg className="animate-spin h-5 w-5 mr-3 text-white" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          ) : (
+            'Generate Content'
+          )}
+        </button>
+        <button
+          onClick={suggestContentIdeas}
+          className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center"
+          disabled={isLoading || contentIdeasLoading}
+        >
+          {contentIdeasLoading ? (
+            <svg className="animate-spin h-5 w-5 mr-3 text-white" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          ) : (
+            'Help me think of ideas for content'
+          )}
+        </button>
+      </div>
 
-                const parsedItems = [];
-                // Split by two newlines to reliably separate item blocks
-                const itemBlocks = geminiOutputContent.split(/\n\s*\n/).filter(block => block.trim().length > 0);
-                
-                itemBlocks.forEach(block => {
-                    const lines = block.split('\n');
-                    let item = { english: '', urdu: '', notes: '', mastery: "Never Seen", batchName: inputBatchName };
-                    
-                    let currentField = ''; 
-                    lines.forEach(line => {
-                        const trimmedLine = line.trim();
-                        if (trimmedLine.startsWith('English:')) {
-                            item.english = trimmedLine.replace(/^English:\s*/, '').trim();
-                            currentField = 'english';
-                        } else if (trimmedLine.startsWith('Urdu:')) { 
-                            item.urdu = trimmedLine.replace(/^Urdu:\s*/, '').trim();
-                            currentField = 'urdu';
-                        } else if (trimmedLine.startsWith('Notes:')) {
-                            item.notes = trimmedLine.replace(/^Notes:\s*/, '').trim();
-                            currentField = 'notes';
-                        } else if (currentField && trimmedLine.length > 0) { // Continuation of a previous field
-                            if (currentField === 'notes') {
-                                item.notes += '\n' + trimmedLine; // Append to notes, preserving newlines
-                            } else if (currentField === 'urdu') {
-                                item.urdu += ' ' + trimmedLine; // Append to Urdu if it's on a second line for some reason (less strict)
-                            } else if (currentField === 'english') {
-                                item.english += ' ' + trimmedLine; // Same for English
-                            }
-                        }
-                    });
-                    
-                    if (item.english && item.urdu) { 
-                        parsedItems.push(item);
-                    } else {
-                        console.warn("Skipped malformed item during parsing:", block);
-                    }
-                });
+      {error && <p className="text-red-500 mt-4 text-center font-medium">{error}</p>}
+      {message && <p className="text-green-600 mt-4 text-center font-medium">{message}</p>}
 
-                if (parsedItems.length === 0) {
-                    showMessage("No valid items parsed from the generated content. Please check formatting in Generate Content tab.", "error");
-                    setIsAddingContent(false); 
-                    return;
-                }
+      {generatedContent.length > 0 && (
+        <div className="mt-8 p-6 bg-gray-50 rounded-lg shadow-inner">
+          <h3 className="text-xl font-semibold text-gray-800 mb-4">Generated Content (Review before adding)</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {generatedContent.map((item, index) => (
+              <div key={index} className="bg-white p-5 rounded-lg shadow-md border border-gray-200">
+                <p className="font-bold text-lg text-blue-700 mb-2">{item.englishTranslation}</p>
+                <p className="text-gray-900 mb-2">
+                  <span className="font-semibold">Urdu:</span> {item.urduScriptTransliteration}
+                </p>
+                <p className="text-gray-700 text-sm">
+                  <span className="font-semibold">Notes:</span> {item.notes}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 flex flex-col md:flex-row justify-end space-y-3 md:space-y-0 md:space-x-4">
+            <button
+              onClick={() => handleLoadToLibrary('vocabulary')}
+              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+            >
+              Load to Vocabulary
+            </button>
+            <button
+              onClick={() => handleLoadToLibrary('dialogues')}
+              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+            >
+              Load to Dialogues
+            </button>
+            <button
+              onClick={() => handleLoadToLibrary('grammarExamples')}
+              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+            >
+              Load to Grammar Examples
+            </button>
+          </div>
+        </div>
+      )}
 
-                // De-duplication check: using lowercase and trimmed versions for robust comparison
-                const existingItemsQuery = query(collection(db, "artifacts", appId, "users", userId, collectionName));
-                const querySnapshot = await getDocs(existingItemsQuery);
-                const existingItems = new Set(querySnapshot.docs.map(doc => `${doc.data().english.toLowerCase().trim()}|${doc.data().urdu.toLowerCase().trim()}`));
-                
-                const uniqueItemsToAdd = parsedItems.filter(item => !existingItems.has(`${item.english.toLowerCase().trim()}|${item.urdu.toLowerCase().trim()}`));
+      {showBatchModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Enter Batch Name</h2>
+            <p className="text-gray-700 mb-4">
+              Please provide a name for this batch of items (e.g., "Kitchen Verbs - Week 1", "Greetings for Kids").
+              This helps organize your learning materials.
+            </p>
+            <input
+              type="text"
+              className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+              value={batchName}
+              onChange={(e) => setBatchName(e.target.value)}
+              placeholder="e.g., Daily Phrases, Food Vocabulary"
+              required
+            />
+            {error && <p className="text-red-500 text-sm italic mb-4">{error}</p>}
+            <div className="flex justify-end space-x-4">
+              <button
+                onClick={() => { setShowBatchModal(false); setError(''); setBatchName(''); setItemsToLoad([]); }}
+                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBatchLoad}
+                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105"
+              >
+                Add to Library
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
-                if (uniqueItemsToAdd.length === 0) {
-                    showMessage(`All ${parsedItems.length} generated items already exist in your library.`, "info");
-                    setIsAddingContent(false); 
-                    return;
-                }
+// Learning Workbench Tab (Vocabulary, Dialogues, Grammar Examples)
+const LearningWorkbenchTab = ({ type }) => {
+  const { db, userId } = useAppContext();
+  const [items, setItems] = useState([]);
+  const [filteredItems, setFilteredItems] = useState([]);
+  const [loadingItems, setLoadingItems] = useState(true);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
 
-                try {
-                    const batch = writeBatch(db);
-                    uniqueItemsToAdd.forEach(item => {
-                        const newDocRef = doc(collection(db, "artifacts", appId, "users", userId, collectionName));
-                        batch.set(newDocRef, item);
-                    });
-                    await batch.commit();
-                    showMessage(`${uniqueItemsToAdd.length} new items added to ${collectionName}. ${parsedItems.length - uniqueItemsToAdd.length} duplicates were skipped.`, 'success');
-                    setLocalGeminiOutput(''); 
-                    setLocalPrompt(''); 
-                } catch(e) {
-                    console.error("Batch write failed: ", e);
-                    showMessage("An error occurred while adding items to your library.", "error");
-                } finally {
-                    setIsAddingContent(false); 
-                }
-            }, [db, userId, appId, showMessage]);
+  const [filterBatch, setFilterBatch] = useState([]);
+  const [filterMastery, setFilterMastery] = useState([]);
+  const [availableBatches, setAvailableBatches] = useState([]);
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [newItem, setNewItem] = useState({
+    urduScriptTransliteration: '',
+    englishTranslation: '',
+    notes: '',
+    masteryLevel: 'Never Seen',
+  });
+  const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
+  const [selectedItems, setSelectedItems] = useState({}); // For Quizlet export checkboxes
+  const [flashcardMode, setFlashcardMode] = useState(false);
+  const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [isCardFlipped, setIsCardFlipped] = useState(false);
 
+  // Fetch items from Firestore and set up real-time listener
+  useEffect(() => {
+    if (!db || !userId) return;
 
-            // Renders the content based on the active tab
-            const renderContent = () => {
-                const {useCallback} = React; 
-                switch (activeTab) {
-                    case 'generate':
-                        return <GenerateContentTab 
-                                    db={db} userId={userId} appId={appId} showMessage={showMessage} 
-                                    existingLibraries={{ vocabulary, dialogues, grammar }} 
-                                    performLoadContent={performLoadContent} 
-                                    setGeneratedOutputForLoad={setGeneratedOutputForLoad} 
-                                    setGenerationPromptForLoad={setGenerationPromptForLoad} 
-                                    generatedOutputForLoad={generatedOutputForLoad} 
-                                    generationPromptForLoad={generationPromptForLoad} 
-                                    setShowBatchNameModal={setShowBatchNameModal}
-                                    setCurrentCollectionToLoad={setCurrentCollectionToLoad}
-                                    isAddingContent={isAddingContent} 
-                                />;
-                    case 'vocabulary':
-                        return <LibraryTab 
-                                    title="Vocabulary" 
-                                    collectionName="vocabulary" 
-                                    items={vocabulary}
-                                    onAddItem={handleAddItem}
-                                    onUpdateItem={handleUpdateItem}
-                                    onDeleteItem={handleDeleteItem}
-                                    hasFlashcards={true}
-                                    showMessage={showMessage}
-                                />;
-                    case 'dialogues':
-                        return <LibraryTab 
-                                    title="Dialogues" 
-                                    collectionName="dialogues" 
-                                    items={dialogues}
-                                    onAddItem={handleAddItem}
-                                    onUpdateItem={handleUpdateItem}
-                                    onDeleteItem={handleDeleteItem}
-                                    itemFields={['english', 'urdu', 'notes']}
-                                    fieldLabels={{english: "English Dialogue", urdu: "Urdu Transliteration", notes: "Phonetic/Grammar Notes"}}
-                                    showMessage={showMessage}
-                                />;
-                    case 'grammar':
-                        return <LibraryTab 
-                                    title="Grammar Examples" 
-                                    collectionName="grammar"
-                                    items={grammar}
-                                    onAddItem={handleAddItem}
-                                    onUpdateItem={handleUpdateItem}
-                                    onDeleteItem={handleDeleteItem}
-                                    itemFields={['english', 'urdu', 'notes']}
-                                    fieldLabels={{english: "Example", urdu: "Urdu Transliteration", notes: "Rule Explanation & Phonetics"}}
-                                    showMessage={showMessage}
-                                />;
-                    default:
-                        return <div>Select a tab</div>;
-                }
-            };
-            
-            // Component: TabButton (for navigation)
-            const TabButton = ({ tabName, children }) => {
-                const { useState, useEffect } = React; 
-                return (
-                    <button
-                        onClick={() => setActiveTab(tabName)}
-                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
-                            activeTab === tabName
-                                ? 'bg-teal-600 text-white shadow-md'
-                                : 'bg-white text-gray-600 hover:bg-teal-50 hover:text-teal-700'
-                        }`}
+    setLoadingItems(true);
+    const collectionRef = collection(db, `artifacts/${appId}/users/${userId}/${type}`);
+    const q = query(collectionRef);
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedItems = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setItems(fetchedItems);
+      setLoadingItems(false);
+
+      // Extract unique batch names for filtering
+      const batches = [...new Set(fetchedItems.map(item => item.batchName).filter(Boolean))];
+      setAvailableBatches(batches);
+    }, (err) => {
+      console.error(`Error fetching ${type} items:`, err);
+      setError(`Failed to load ${type} items.`);
+      setLoadingItems(false);
+    });
+
+    return () => unsubscribe(); // Cleanup listener on unmount
+  }, [db, userId, type]);
+
+  // Apply filters whenever items, filterBatch, or filterMastery change
+  useEffect(() => {
+    let tempItems = [...items];
+
+    if (filterBatch.length > 0) {
+      tempItems = tempItems.filter(item => filterBatch.includes(item.batchName));
+    }
+    if (filterMastery.length > 0) {
+      tempItems = tempItems.filter(item => filterMastery.includes(item.masteryLevel));
+    }
+    setFilteredItems(tempItems);
+    // Reset selected items when filters change
+    setSelectedItems({});
+    // Reset flashcard index if filtered items change
+    setCurrentCardIndex(0);
+    setIsCardFlipped(false);
+  }, [items, filterBatch, filterMastery]);
+
+  // Handle changes to an item's field
+  const handleItemChange = (id, field, value) => {
+    setFilteredItems(prevItems =>
+      prevItems.map(item =>
+        item.id === id ? { ...item, [field]: value } : item
+      )
+    );
+  };
+
+  // Save changes to an item in Firestore
+  const saveItemChanges = async (item) => {
+    if (!db || !userId) return;
+    try {
+      const itemRef = doc(db, `artifacts/${appId}/users/${userId}/${type}`, item.id);
+      await updateDoc(itemRef, item);
+      setMessage('Item updated successfully!');
+    } catch (err) {
+      console.error('Error updating item:', err);
+      setError('Failed to update item.');
+    }
+  };
+
+  // Add new custom item
+  const handleAddItem = async (e) => {
+    e.preventDefault();
+    if (!db || !userId) {
+      setError('User not authenticated or database not ready.');
+      return;
+    }
+    if (!newItem.englishTranslation || !newItem.urduScriptTransliteration) {
+      setError('English Translation and Urdu Transliteration are required.');
+      return;
+    }
+
+    try {
+      const collectionRef = collection(db, `artifacts/${appId}/users/${userId}/${type}`);
+      await addDoc(collectionRef, {
+        ...newItem,
+        batchName: newItem.batchName || 'Custom', // Default batch name for custom items
+        createdAt: new Date(),
+      });
+      setMessage('New item added successfully!');
+      setShowAddItemModal(false);
+      setNewItem({
+        urduScriptTransliteration: '',
+        englishTranslation: '',
+        notes: '',
+        masteryLevel: 'Never Seen',
+      });
+    } catch (err) {
+      console.error('Error adding new item:', err);
+      setError('Failed to add new item.');
+    }
+  };
+
+  // Delete item confirmation
+  const confirmDeleteItem = (item) => {
+    setItemToDelete(item);
+    setShowConfirmDeleteModal(true);
+  };
+
+  // Execute delete item
+  const handleDeleteItem = async () => {
+    if (!db || !userId || !itemToDelete) return;
+    try {
+      const itemRef = doc(db, `artifacts/${appId}/users/${userId}/${type}`, itemToDelete.id);
+      await deleteDoc(itemRef);
+      setMessage('Item deleted successfully!');
+      setShowConfirmDeleteModal(false);
+      setItemToDelete(null);
+    } catch (err) {
+      console.error('Error deleting item:', err);
+      setError('Failed to delete item.');
+    }
+  };
+
+  // Quizlet Export Logic
+  const handleExportToQuizlet = () => {
+    let itemsToExport = [];
+    const selectedCount = Object.values(selectedItems).filter(val => val).length;
+
+    if (selectedCount > 0) {
+      itemsToExport = filteredItems.filter(item => selectedItems[item.id]);
+    } else {
+      // If no items are checked, prompt to export all currently filtered items
+      if (!window.confirm('No specific items are checked. Do you want to export all currently filtered items?')) {
+        return; // User cancelled
+      }
+      itemsToExport = filteredItems;
+    }
+
+    if (itemsToExport.length === 0) {
+      setMessage('No items selected or filtered to export.');
+      return;
+    }
+
+    const quizletText = itemsToExport.map(item => {
+      const notes = formatNotesForQuizlet(item.notes);
+      // Format: English Term | Urdu Script (Transliteration) // Phonetic Notes // Grammar Notes
+      return `${item.englishTranslation} | ${item.urduScriptTransliteration} // ${notes}`;
+    }).join('\n');
+
+    try {
+      navigator.clipboard.writeText(quizletText)
+        .then(() => {
+          setMessage('Content copied to clipboard for Quizlet import!');
+        })
+        .catch(err => {
+          // Fallback for document.execCommand('copy') if navigator.clipboard fails
+          const textarea = document.createElement('textarea');
+          textarea.value = quizletText;
+          textarea.style.position = 'fixed'; // Avoid scrolling to bottom
+          textarea.style.opacity = '0'; // Hide it
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+              setMessage('Content copied to clipboard for Quizlet import (fallback)!');
+            } else {
+              setError('Failed to copy to clipboard. Please copy manually.');
+            }
+          } catch (execErr) {
+            setError('Failed to copy to clipboard. Please copy manually.');
+          }
+          document.body.removeChild(textarea);
+        });
+    } catch (err) {
+      setError('Failed to copy to clipboard. Your browser might not support this feature.');
+      console.error('Clipboard API error:', err);
+    }
+  };
+
+  // Handle select all checkbox
+  const handleSelectAll = (e) => {
+    const isChecked = e.target.checked;
+    const newSelectedItems = {};
+    filteredItems.forEach(item => {
+      newSelectedItems[item.id] = isChecked;
+    });
+    setSelectedItems(newSelectedItems);
+  };
+
+  // Flashcard Mode Logic
+  const toggleFlashcardMode = () => {
+    if (filteredItems.length === 0) {
+      setMessage('No items to practice in flashcard mode. Try generating or adding some!');
+      return;
+    }
+    setFlashcardMode(prev => !prev);
+    setCurrentCardIndex(0);
+    setIsCardFlipped(false);
+  };
+
+  const currentCard = filteredItems[currentCardIndex];
+
+  const nextCard = () => {
+    setCurrentCardIndex(prevIndex => (prevIndex + 1) % filteredItems.length);
+    setIsCardFlipped(false);
+  };
+
+  const prevCard = () => {
+    setCurrentCardIndex(prevIndex => (prevIndex - 1 + filteredItems.length) % filteredItems.length);
+    setIsCardFlipped(false);
+  };
+
+  const shuffleCards = () => {
+    const shuffled = [...filteredItems].sort(() => Math.random() - 0.5);
+    setFilteredItems(shuffled);
+    setCurrentCardIndex(0);
+    setIsCardFlipped(false);
+  };
+
+  // Handle mastery level change on flashcard
+  const handleFlashcardMasteryChange = async (level) => {
+    if (currentCard) {
+      await saveItemChanges({ ...currentCard, masteryLevel: level });
+      setMessage(`Mastery level for "${currentCard.englishTranslation}" updated to "${level}"`);
+    }
+  };
+
+  // Handle delete on flashcard
+  const handleFlashcardDelete = (item) => {
+    confirmDeleteItem(item);
+  };
+
+  if (loadingItems) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <svg className="animate-spin h-8 w-8 text-blue-600" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span className="ml-3 text-lg text-gray-700">Loading {type} items...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-semibold text-gray-800 capitalize">{type} Library</h2>
+
+      {error && <p className="text-red-500 mt-4 text-center font-medium">{error}</p>}
+      {message && <p className="text-green-600 mt-4 text-center font-medium">{message}</p>}
+
+      {/* Filtering and Actions */}
+      <div className="bg-gray-50 p-5 rounded-lg shadow-inner flex flex-col md:flex-row items-center justify-between space-y-4 md:space-y-0 md:space-x-4">
+        <div className="flex flex-wrap gap-4 w-full md:w-auto">
+          {/* Filter by Batch */}
+          <div className="relative w-full md:w-auto">
+            <select
+              multiple
+              className="block appearance-none w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 pr-8 rounded-lg leading-tight focus:outline-none focus:bg-white focus:border-blue-500 h-24 overflow-y-auto"
+              value={filterBatch}
+              onChange={(e) => {
+                const options = Array.from(e.target.selectedOptions, option => option.value);
+                setFilterBatch(options);
+              }}
+            >
+              <option value="" disabled>Filter by Batch</option>
+              {availableBatches.map(batch => (
+                <option key={batch} value={batch}>{batch}</option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+            </div>
+            {filterBatch.length > 0 && (
+              <button
+                onClick={() => setFilterBatch([])}
+                className="absolute -bottom-7 left-0 text-xs text-blue-600 hover:underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Filter by Mastery */}
+          <div className="relative w-full md:w-auto">
+            <select
+              multiple
+              className="block appearance-none w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 pr-8 rounded-lg leading-tight focus:outline-none focus:bg-white focus:border-blue-500 h-24 overflow-y-auto"
+              value={filterMastery}
+              onChange={(e) => {
+                const options = Array.from(e.target.selectedOptions, option => option.value);
+                setFilterMastery(options);
+              }}
+            >
+              <option value="" disabled>Filter by Mastery</option>
+              {MASTERY_LEVELS.map(level => (
+                <option key={level} value={level}>{level}</option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+            </div>
+            {filterMastery.length > 0 && (
+              <button
+                onClick={() => setFilterMastery([])}
+                className="absolute -bottom-7 left-0 text-xs text-blue-600 hover:underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-4 w-full md:w-auto">
+          {type === 'vocabulary' && (
+            <button
+              onClick={toggleFlashcardMode}
+              className="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+            >
+              {flashcardMode ? 'Exit Flashcard Mode' : 'Toggle Flashcard Mode'}
+            </button>
+          )}
+          <button
+            onClick={() => setShowAddItemModal(true)}
+            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+          >
+            Add Custom Item
+          </button>
+          <button
+            onClick={handleExportToQuizlet}
+            className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+          >
+            Export to Quizlet
+          </button>
+        </div>
+      </div>
+
+      {/* Flashcard Mode */}
+      {flashcardMode && type === 'vocabulary' && (
+        <div className="mt-8 p-6 bg-blue-100 rounded-lg shadow-lg">
+          <h3 className="text-xl font-semibold text-blue-800 mb-4 text-center">Flashcard Practice</h3>
+          {filteredItems.length > 0 ? (
+            <div className="flex flex-col items-center space-y-4">
+              <div
+                className={`relative bg-white p-8 rounded-xl shadow-xl w-full max-w-lg min-h-[200px] flex items-center justify-center text-center cursor-pointer transition-transform duration-500 transform ${isCardFlipped ? 'rotate-y-180' : ''}`}
+                onClick={() => setIsCardFlipped(!isCardFlipped)}
+                style={{ backfaceVisibility: 'hidden', perspective: '1000px' }}
+              >
+                <div className={`absolute inset-0 flex items-center justify-center p-4 ${isCardFlipped ? 'opacity-0' : 'opacity-100'}`}>
+                  <p className="text-3xl font-bold text-gray-800">{currentCard?.englishTranslation}</p>
+                </div>
+                <div className={`absolute inset-0 flex flex-col items-center justify-center p-4 rotate-y-180 ${isCardFlipped ? 'opacity-100' : 'opacity-0'}`}>
+                  <p className="text-2xl font-bold text-blue-700 mb-2">{currentCard?.urduScriptTransliteration}</p>
+                  <p className="text-gray-700 text-sm mb-1">
+                    <span className="font-semibold">Phonetics/Notes:</span> {currentCard?.notes}
+                  </p>
+                  <div className="mt-4 flex flex-wrap justify-center gap-2">
+                    <select
+                      value={currentCard?.masteryLevel || 'Never Seen'}
+                      onChange={(e) => handleFlashcardMasteryChange(e.target.value)}
+                      className="bg-gray-200 text-gray-800 rounded-md px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                        {children}
+                      {MASTERY_LEVELS.map(level => (
+                        <option key={level} value={level}>{level}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleFlashcardDelete(currentCard); }}
+                      className="bg-red-400 hover:bg-red-500 text-white text-sm py-1 px-3 rounded-md transition duration-200"
+                    >
+                      Delete
                     </button>
-                );
-            };
-
-            return (
-                <div className="min-h-screen flex flex-col items-center p-4 sm:p-6 md:p-8 bg-stone-50 antialiased">
-                    <div className="w-full max-w-7xl mx-auto">
-                        <header className="text-center mb-8">
-                            <h1 className="text-4xl md:text-5xl font-bold text-teal-800">Hyderabadi Urdu Quizlet Builder</h1>
-                            <p className="text-gray-500 mt-2">Your personal workbench for generating and curating Urdu learning content.</p>
-                            {/* Display Authentication Status */}
-                            {!userId ? (
-                                <div className="mt-4 p-4 bg-orange-100 border border-orange-200 rounded-lg shadow-sm">
-                                    <h3 className="text-orange-700 font-semibold mb-2">Sign In / Sign Up to save your data across devices</h3>
-                                    <p className="text-gray-600 mb-4">You are currently using an anonymous session. Your data is saved, but linking an email makes it accessible from anywhere.</p>
-                                    
-                                    <input
-                                        type="email"
-                                        placeholder="Email"
-                                        className="w-full max-w-xs p-2 border border-gray-300 rounded-md mb-2 focus:ring-teal-500 focus:border-teal-500"
-                                        value={email}
-                                        onChange={(e) => setEmail(e.target.value)}
-                                        disabled={authProcessing}
-                                    />
-                                    <input
-                                        type="password"
-                                        placeholder="Password"
-                                        className="w-full max-w-xs p-2 border border-gray-300 rounded-md mb-4 focus:ring-teal-500 focus:border-teal-500"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        disabled={authProcessing}
-                                    />
-                                    <div className="flex justify-center gap-2">
-                                        <button
-                                            onClick={handleEmailSignIn}
-                                            className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow hover:bg-indigo-700 disabled:opacity-50"
-                                            disabled={!email || !password || authProcessing}
-                                        >
-                                            {authProcessing ? 'Signing In...' : 'Sign In'}
-                                        </button>
-                                        <button
-                                            onClick={handleEmailSignUp}
-                                            className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg shadow hover:bg-green-700 disabled:opacity-50"
-                                            disabled={!email || !password || authProcessing}
-                                        >
-                                            {authProcessing ? 'Signing Up...' : 'Sign Up'}
-                                        </button>
-                                    </div>
-                                    <p className="text-sm text-gray-500 mt-4">
-                                        Signing in will link your anonymous data to your account.
-                                    </p>
-                                </div>
-                            ) : (
-                                <div className="mt-4 p-3 bg-teal-100 border border-teal-200 rounded-lg shadow-sm flex items-center justify-between text-teal-800 font-semibold text-sm">
-                                    <span>Signed in as: {auth.currentUser?.email || 'Anonymous'} (ID: <span className="font-mono break-all">{userId}</span>)</span>
-                                    <button
-                                        onClick={handleSignOut}
-                                        className="px-3 py-1 bg-red-500 text-white rounded-md text-xs hover:bg-red-600 shadow-sm"
-                                    >
-                                        Sign Out
-                                    </button>
-                                </div>
-                            )}
-                        </header>
-                        
-                        {message.text && <MessageBox message={message.text} type={message.type} />}
-
-                        <div className="bg-white/80 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-gray-200 mb-8">
-                             <nav className="flex flex-wrap justify-center gap-2">
-                                <TabButton tabName="generate">📝 Generate Content</TabButton>
-                                <TabButton tabName="vocabulary">📚 Vocabulary ({vocabulary.length})</TabButton>
-                                <TabButton tabName="dialogues">💬 Dialogues ({dialogues.length})</TabButton>
-                                <TabButton tabName="grammar">🔬 Grammar Examples ({grammar.length})</TabButton>
-                            </nav>
-                        </div>
-
-                        <main className="bg-white p-6 sm:p-8 rounded-2xl shadow-xl border border-gray-200 min-h-[60vh]">
-                            {isLoading ? <div className="flex justify-center items-center h-full"><div className="spinner"></div></div> : renderContent()}
-                        </main>
-
-                        <footer className="text-center mt-8 text-sm text-gray-500">
-                            <div className="max-w-3xl mx-auto bg-stone-100 p-4 rounded-lg border">
-                                <h3 className="font-bold mb-2 text-gray-700">Workflow Guide</h3>
-                                <ol className="list-decimal list-inside text-left space-y-1 text-gray-600">
-                                    <li>Use the <strong>Generate Content</strong> tab to create new learning material based on your prompts or AI suggestions.</li>
-                                    <li>Click <strong>Load to...</strong> on the generated content to add the unique items to your permanent library (duplicates are skipped). You'll be prompted for a batch name for organization.</li>
-                                    <li>Review, edit, and practice in the <strong>Vocabulary, Dialogues, and Grammar Examples</strong> tabs. All changes here are saved automatically.</li>
-                                    <li>When ready, use the <strong>Export to Quizlet</strong> button to copy selected (or all filtered) items in Quizlet-ready format to your clipboard.</li>
-                                    <li>In Quizlet, create a new set, use the "Import" function, paste the text, and set `|` as the delimiter between term and definition.</li>
-                                    <li>Remember to manually add authentic audio from your family members directly in Quizlet for the best pronunciation practice!</li>
-                                </ol>
-                            </div>
-                        </footer>
-                    </div>
-                    {showBatchNameModal && (
-                        <BatchNameModal
-                            onConfirm={(batchName) => {
-                                setShowBatchNameModal(false);
-                                performLoadContent(
-                                    currentCollectionToLoad, 
-                                    batchName, 
-                                    generatedOutputForLoad, 
-                                    setGeneratedOutputForLoad, 
-                                    setGenerationPromptForLoad 
-                                );
-                            }}
-                            onCancel={() => {
-                                setShowBatchNameModal(false);
-                                showMessage("Loading cancelled by user.", "info");
-                                setIsLoading(false);
-                                setIsAddingContent(false); 
-                            }}
-                            batchNameInputRef={batchNameInputRef}
-                        />
-                    )}
+                  </div>
                 </div>
-            );
-        };
-        
-        // Component: MessageBox
-        const MessageBox = ({ message, type }) => {
-            const { useState, useEffect } = React; 
-            if (!message) return null;
-            const baseClasses = "p-4 mb-4 rounded-lg text-center shadow";
-            const typeClasses = {
-                info: "bg-blue-100 text-blue-800 border border-blue-200",
-                success: "bg-green-100 text-green-800 border border-green-200",
-                error: "bg-red-100 text-red-800 border border-red-200",
-            };
-            return <div className={`${baseClasses} ${typeClasses[type]}`}>{message}</div>;
-        };
+              </div>
+              <div className="flex space-x-4 mt-4">
+                <button
+                  onClick={prevCard}
+                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300"
+                >
+                  Previous Card
+                </button>
+                <button
+                  onClick={shuffleCards}
+                  className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300"
+                >
+                  Shuffle
+                </button>
+                <button
+                  onClick={nextCard}
+                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300"
+                >
+                  Next Card
+                </button>
+              </div>
+              <p className="text-sm text-gray-600 mt-2">Card {currentCardIndex + 1} of {filteredItems.length}</p>
+            </div>
+          ) : (
+            <p className="text-center text-gray-600">No vocabulary items match your filters for flashcard practice.</p>
+          )}
+        </div>
+      )}
 
-        // Component: BatchNameModal
-        const BatchNameModal = ({ onConfirm, onCancel, batchNameInputRef }) => {
-            const { useState, useEffect } = React; 
-            const [batchName, setBatchName] = useState('');
 
-            useEffect(() => {
-                if (batchNameInputRef.current) {
-                    batchNameInputRef.current.focus();
-                }
-            }, []);
-
-            return (
-                <div className="modal-overlay">
-                    <div className="modal-content">
-                        <h3 className="text-xl font-semibold mb-4">Enter Batch Name</h3>
-                        <p className="text-gray-700 mb-4">Give a name to this set of generated items (e.g., 'Kitchen Verbs', 'Daily Greetings').</p>
+      {/* Item List View */}
+      {!flashcardMode && (
+        <div className="mt-8">
+          {filteredItems.length > 0 ? (
+            <div className="overflow-x-auto rounded-lg shadow-md border border-gray-200">
+              <table className="min-w-full bg-white">
+                <thead className="bg-gray-100 border-b border-gray-200">
+                  <tr>
+                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider rounded-tl-lg">
+                      <input
+                        type="checkbox"
+                        checked={Object.keys(selectedItems).length > 0 && Object.keys(selectedItems).every(id => selectedItems[id])}
+                        onChange={handleSelectAll}
+                        className="form-checkbox h-4 w-4 text-blue-600 rounded"
+                      />
+                    </th>
+                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">English</th>
+                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Urdu (Transliteration)</th>
+                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Notes</th>
+                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Batch</th>
+                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Mastery</th>
+                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider rounded-tr-lg">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {filteredItems.map((item) => (
+                    <tr key={item.id} className="hover:bg-gray-50">
+                      <td className="py-3 px-4">
                         <input
-                            type="text"
-                            ref={batchNameInputRef}
-                            value={batchName}
-                            onChange={(e) => setBatchName(e.target.value)}
-                            placeholder="Batch name (e.g., 'Food Items')"
-                            className="w-full p-2 border border-gray-300 rounded-md mb-4 focus:ring-teal-500 focus:border-teal-500"
+                          type="checkbox"
+                          checked={selectedItems[item.id] || false}
+                          onChange={(e) => setSelectedItems({ ...selectedItems, [item.id]: e.target.checked })}
+                          className="form-checkbox h-4 w-4 text-blue-600 rounded"
                         />
-                        <div className="flex justify-end gap-3">
-                            <button
-                                onClick={onCancel}
-                                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => onConfirm(batchName.trim())}
-                                disabled={!batchName.trim()}
-                                className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                Confirm
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const GenerateContentTab = ({ db, userId, appId, showMessage, existingLibraries, performLoadContent, setGeneratedOutputForLoad, setGenerationPromptForLoad, generatedOutputForLoad, generationPromptForLoad, setShowBatchNameModal, setCurrentCollectionToLoad, isAddingContent }) => { 
-            const { useState, useEffect } = React; 
-            const [localPrompt, setLocalPrompt] = useState(generationPromptForLoad); 
-            const [localGeminiOutput, setLocalGeminiOutput] = useState(generatedOutputForLoad); 
-            const [localIsGenerating, setLocalIsGenerating] = useState(false);
-
-            useEffect(() => {
-                setLocalGeminiOutput(generatedOutputForLoad); 
-            }, [generatedOutputForLoad]);
-
-            useEffect(() => {
-                setLocalPrompt(generationPromptForLoad);
-            }, [generationPromptForLoad]);
-            
-            const handleGenerateContent = async (generationPrompt) => { 
-                setLocalIsGenerating(true);
-                setLocalGeminiOutput(''); 
-                setGeneratedOutputForLoad(''); 
-                
-                let chatHistory = [{ role: "user", parts: [{ text: generationPrompt }] }];
-                const payload = { contents: chatHistory };
-                const apiKey = "AIzaSyC3IWkB5fGW9tLiWya5OtT-GNiGtbm9hQM"; // User's Gemini API Key
-
-                try {
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok) {
-                         const errorBody = await response.text();
-                         throw new Error(`API error: ${response.status} ${response.statusText}. Details: ${errorBody}`);
-                    }
-                    
-                    const result = await response.json();
-
-                    if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
-                        const generatedText = result.candidates[0].content.parts[0].text;
-                        setLocalGeminiOutput(generatedText); 
-                        setGeneratedOutputForLoad(generatedText); 
-                        showMessage("Content generated successfully! Now load it to your library.", 'success');
-                    } else {
-                        throw new Error("No content received from API.");
-                    }
-                } catch (error) {
-                    console.error("Error generating content:", error);
-                    showMessage(`Content generation failed: ${error.message}`, 'error');
-                } finally {
-                    setLocalIsGenerating(false);
-                }
-            };
-            
-            const handleGenerate = () => {
-                 const fullPrompt = `
-                    You are an expert language teacher specializing in Hyderabadi Urdu for non-script learners. 
-                    Based on the user's request, generate a list of items formatted for easy parsing.
-                    Each item must have an "English:", "Urdu:" (containing **BOTH the Urdu script AND its transliteration, like this: "Urdu: سلام (Salam)".**
-                    The "Notes:" field MUST contain **concise phonetic hints (only for challenging sounds for English speakers, avoid redundant notes like "X sounds like X in English"). Focus on tongue placement, aspiration, and specific comparisons (e.g., American English 'd', French 'r'). Also include contextual usage notes (e.g., 'Palang' for general bed vs. 'Bister' for beddings/sleeping setup) where words have nuanced meanings or usage scenarios.**
-                    Each item must also include any relevant grammar rule explanations, concisely presented.
-
-                    USER REQUEST: "${localPrompt}" 
-                    Generate the content now.
-                `;
-                handleGenerateContent(fullPrompt); // Call the main generation function
-            };
-
-            const handleSuggestIdeas = () => {
-                 const existingSummary = `
-                    The user already has:
-                    - ${existingLibraries.vocabulary.length} vocabulary words.
-                    - ${existingLibraries.dialogues.length} dialogues.
-                    - ${existingLibraries.grammar.length} grammar examples.
-                    Some existing English terms are: ${existingLibraries.vocabulary.slice(0, 5).map(v => `"${v.english}"`).join(', ')}.
-                `;
-
-                const suggestionPrompt = `
-                    You are an expert language teacher specializing in Hyderabadi Urdu.
-                    A user wants to learn conversational Urdu for family communication.
-                    Based on the summary of their existing library, suggest 5 NEW, SPECIFIC, and ACTIONABLE content ideas for them to generate next.
-                    Present these as a simple list. Do not use markdown formatting.
-                    
-                    EXISTING LIBRARY SUMMARY:
-                    ${existingSummary}
-                    
-                    Suggest 5 new ideas now.
-                `;
-                handleGenerateContent(suggestionPrompt); // Call the main generation function
-            };
-
-            const initiateLoadProcess = (collectionName) => {
-                if (!localGeminiOutput.trim()) {
-                    showMessage("No generated content to load. Please generate content first.", "info");
-                    return;
-                }
-                if (!db || !userId) {
-                    showMessage("Database not ready or user not authenticated. Please wait.", "error");
-                    return;
-                }
-                setCurrentCollectionToLoad(collectionName); 
-                setShowBatchNameModal(true);
-            };
-            
-            return (
-                <div className="generate-content-tab-container"> 
-                    <h2 className="text-2xl font-bold mb-4 text-teal-700">Generate New Learning Content</h2>
-                    <div className="space-y-4">
+                      </td>
+                      <td className="py-3 px-4">
+                        <input
+                          type="text"
+                          value={item.englishTranslation}
+                          onChange={(e) => handleItemChange(item.id, 'englishTranslation', e.target.value)}
+                          onBlur={() => saveItemChanges(item)}
+                          className="w-full p-1 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </td>
+                      <td className="py-3 px-4">
+                        <input
+                          type="text"
+                          value={item.urduScriptTransliteration}
+                          onChange={(e) => handleItemChange(item.id, 'urduScriptTransliteration', e.target.value)}
+                          onBlur={() => saveItemChanges(item)}
+                          className="w-full p-1 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </td>
+                      <td className="py-3 px-4">
                         <textarea
-                            className="w-full p-3 border border-gray-300 rounded-lg shadow-inner focus:ring-2 focus:ring-teal-500 focus:outline-none"
-                            rows="4"
-                            value={localPrompt} 
-                            onChange={(e) => setLocalPrompt(e.target.value)} 
-                            placeholder="e.g., '10 household items', 'sentences for asking how someone's day was', 'explain the 'ne' postposition with 5 examples'"
+                          value={item.notes}
+                          onChange={(e) => handleItemChange(item.id, 'notes', e.target.value)}
+                          onBlur={() => saveItemChanges(item)}
+                          rows="3"
+                          className="w-full p-1 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400 resize-y"
                         ></textarea>
-                        <div className="flex flex-wrap gap-2">
-                            <button
-                                onClick={handleGenerate}
-                                className="px-5 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-opacity-75 transition transform hover:scale-105 disabled:bg-gray-400"
-                                disabled={localIsGenerating || !localPrompt} 
-                            >
-                                {localIsGenerating ? 'Generating...' : '✨ Generate'}
-                            </button>
-                            <button
-                                onClick={handleSuggestIdeas}
-                                className="px-5 py-2 bg-indigo-500 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transition transform hover:scale-105 disabled:bg-gray-400"
-                                disabled={localIsGenerating} 
-                            >
-                                🤔 Suggest Ideas
-                            </button>
-                        </div>
-                    </div>
-
-                    {(localIsGenerating || localGeminiOutput) && (
-                        <div className="mt-6">
-                             <h3 className="text-xl font-bold mb-2 text-gray-700">Generated Content</h3>
-                             <div className="bg-stone-100 p-4 rounded-lg border min-h-[200px] whitespace-pre-wrap font-mono text-sm overflow-x-auto">
-                                {localIsGenerating ? <div className="flex justify-center items-center h-full"><div className="spinner"></div></div> : localGeminiOutput}
-                             </div>
-                             {!localIsGenerating && localGeminiOutput && (
-                                <div className="mt-4 flex flex-wrap gap-2">
-                                    <button onClick={() => initiateLoadProcess('vocabulary')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">Load to Vocabulary</button>
-                                    <button onClick={() => initiateLoadProcess('dialogues')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:bg-gray-400">Load to Dialogues</button>
-                                    <button onClick={() => initiateLoadProcess('grammar')} disabled={isAddingContent} className="px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg shadow hover:bg-blue-600 disabled:bg-gray-400">Load to Grammar Examples</button>
-                                    {isAddingContent && <div className="spinner"></div>} 
-                                </div>
-                             )}
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        const LibraryTab = ({ title, collectionName, items, onAddItem, onUpdateItem, onDeleteItem, hasFlashcards = false, itemFields = ['english', 'urdu', 'notes'], fieldLabels = {english: 'English', urdu: 'Urdu Transliteration', notes: 'Phonetic/Grammar Notes'}, showMessage }) => {
-            const { useState, useEffect, useMemo } = React; 
-            const [isAdding, setIsAdding] = useState(false);
-            const [newItem, setNewItem] = useState(itemFields.reduce((acc, field) => ({ ...acc, [field]: '' }), {}));
-            const [viewMode, setViewMode] = useState('list');
-            
-            const [allBatchNames, setAllBatchNames] = useState([]);
-            const [selectedBatchNames, setSelectedBatchNames] = useState(new Set());
-            const [selectedMasteryLevels, setSelectedMasteryLevels] = useState(new Set()); 
-
-            // Collect all unique batch names from items
-            useEffect(() => {
-                const names = new Set();
-                items.forEach(item => {
-                    if (item.batchName) {
-                        names.add(item.batchName);
-                    }
-                });
-                setAllBatchNames(Array.from(names).sort());
-            }, [items]);
-
-            const filteredItems = useMemo(() => {
-                return items.filter(item => {
-                    const matchesBatch = selectedBatchNames.size === 0 || (item.batchName && selectedBatchNames.has(item.batchName));
-                    const matchesMastery = selectedMasteryLevels.size === 0 || selectedMasteryLevels.has(item.mastery);
-                    return matchesBatch && matchesMastery;
-                });
-            }, [items, selectedBatchNames, selectedMasteryLevels]);
-            
-            const handleAddNew = () => {
-                const itemData = {...newItem, mastery: "Never Seen", batchName: newItem.batchName || ''}; // Default mastery and batchName
-                onAddItem(collectionName, itemData);
-                setNewItem(itemFields.reduce((acc, field) => ({ ...acc, [field]: '' }), {}));
-                setIsAdding(false);
-            };
-
-            const handleExportToQuizlet = () => {
-                let itemsToExport = Array.from(selectedItemsToExport.values()).map(id => items.find(item => item.id === id)).filter(Boolean);
-                
-                if (itemsToExport.length === 0) {
-                    if (confirm(`No specific items selected. Do you want to export all ${filteredItems.length} filtered items?`)) {
-                        itemsToExport = filteredItems;
-                    } else {
-                        showMessage('Export cancelled.', 'info');
-                        return;
-                    }
-                }
-
-                const quizletString = itemsToExport.map(item => {
-                    // Item.urdu now contains both script and transliteration
-                    const backContent = `${item.urdu} // ${item.notes || ''}`.replace(/\n/g, ' // ').trim();
-                    return `${item.english.trim()} | ${backContent}`;
-                }).join('\n'); // Each item on a new line for Quizlet card separation
-
-                const textarea = document.createElement('textarea');
-                textarea.value = quizletString;
-                textarea.style.position = 'fixed'; // Prevents scrolling to bottom
-                textarea.style.left = '-9999px'; // Off-screen
-                document.body.appendChild(textarea);
-                textarea.select();
-                try {
-                    const successful = document.execCommand('copy');
-                    if (successful) {
-                        showMessage(`${itemsToExport.length} items copied to clipboard for Quizlet!`, 'success');
-                    } else {
-                        showMessage('Failed to copy to clipboard automatically. Please manually copy the content.', 'error');
-                        console.error('document.execCommand("copy") was not successful.');
-                    }
-                } catch (err) {
-                    console.error('Failed to copy to clipboard:', err);
-                    showMessage('Failed to copy to clipboard. Your browser might block automatic copying. Please copy manually.', 'error');
-                } finally {
-                    document.body.removeChild(textarea);
-                }
-            };
-
-            const [selectedItemsToExport, setSelectedItemsToExport] = useState(new Set()); // IDs of items to export
-
-            const toggleSelectItem = (itemId, isChecked) => {
-                setSelectedItemsToExport(prev => {
-                    const newSet = new Set(prev);
-                    if (isChecked) {
-                        newSet.add(itemId);
-                    } else {
-                        newSet.delete(itemId);
-                    }
-                    return newSet;
-                });
-            };
-
-            const toggleSelectAll = (isChecked) => {
-                setSelectedItemsToExport(prev => {
-                    const newSet = new Set();
-                    if (isChecked) {
-                        filteredItems.forEach(item => newSet.add(item.id));
-                    }
-                    return newSet;
-                });
-            };
-
-            return (
-                <div>
-                    <div className="flex justify-between items-center mb-6 flex-wrap gap-2">
-                        <h2 className="text-2xl font-bold text-teal-700">{title} ({filteredItems.length} filtered)</h2>
-                        <div className="flex gap-2">
-                             {hasFlashcards && filteredItems.length > 0 && (
-                                <button onClick={() => setViewMode(viewMode === 'list' ? 'flashcards' : 'list')} className="px-4 py-2 bg-purple-500 text-white rounded-lg shadow hover:bg-purple-600">
-                                    {viewMode === 'list' ? 'Flashcard Mode' : 'List Mode'}
-                                </button>
-                             )}
-                            <button onClick={handleExportToQuizlet} className="px-4 py-2 bg-orange-500 text-white rounded-lg shadow hover:bg-orange-600" disabled={filteredItems.length === 0}>Export to Quizlet</button>
-                            <button onClick={() => setIsAdding(!isAdding)} className="px-4 py-2 bg-teal-600 text-white rounded-lg shadow hover:bg-teal-700">{isAdding ? 'Cancel' : 'Add New'}</button>
-                        </div>
-                    </div>
-
-                    {isAdding && (
-                        <div className="bg-stone-50 p-4 rounded-lg border mb-6 space-y-3">
-                            <h3 className="text-lg font-semibold">Add New {title.replace(/s$/, '')}</h3> {/* Remove 's' from title for singular form */}
-                             {itemFields.map(field => (
-                                <div key={field}>
-                                    <label className="block text-sm font-medium text-gray-700">{fieldLabels[field]}</label>
-                                    <input
-                                        type="text"
-                                        value={newItem[field]}
-                                        onChange={(e) => setNewItem({ ...newItem, [field]: e.target.value })}
-                                        className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500"
-                                    />
-                                </div>
-                            ))}
-                            {/* Add Batch Name field for manual adds */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">Batch Name (Optional)</label>
-                                <input
-                                    type="text"
-                                    value={newItem.batchName || ''}
-                                    onChange={(e) => setNewItem({ ...newItem, batchName: e.target.value })}
-                                    className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500"
-                                    placeholder="e.g., 'Custom Phrases'"
-                                />
-                            </div>
-                            <button onClick={handleAddNew} className="px-4 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700">Save Item</button>
-                        </div>
-                    )}
-
-                    <div className="flex flex-wrap gap-4 mb-4 p-4 bg-stone-100 rounded-lg border">
-                        <div className="flex-1 min-w-[150px]">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Batch:</label>
-                            <div className="relative inline-block text-left w-full">
-                                <select 
-                                    multiple 
-                                    className="block w-full px-3 py-2 text-base border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-teal-500 focus:border-teal-500 h-32 overflow-y-auto"
-                                    value={Array.from(selectedBatchNames)}
-                                    onChange={(e) => {
-                                        const options = Array.from(e.target.selectedOptions).map(option => option.value);
-                                        setSelectedBatchNames(new Set(options));
-                                    }}
-                                >
-                                    {allBatchNames.map(name => (
-                                        <option key={name} value={name}>{name}</option>
-                                    ))}
-                                </select>
-                                <button 
-                                    onClick={() => setSelectedBatchNames(new Set())} 
-                                    className="text-xs text-gray-500 hover:text-gray-700 mt-1 block"
-                                >Clear</button>
-                            </div>
-                        </div>
-
-                        <div className="flex-1 min-w-[150px]">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Mastery:</label>
-                            <div className="relative inline-block text-left w-full">
-                                <select 
-                                    multiple 
-                                    className="block w-full px-3 py-2 text-base border border-gray-300 rounded-md shadow-sm bg-white focus:outline-none focus:ring-teal-500 focus:border-teal-500 h-32 overflow-y-auto"
-                                    value={Array.from(selectedMasteryLevels)}
-                                    onChange={(e) => {
-                                        const options = Array.from(e.target.selectedOptions).map(option => option.value);
-                                        setSelectedMasteryLevels(new Set(options));
-                                    }}
-                                >
-                                    {['Never Seen', 'Familiar', 'Getting Close', 'Great!'].map(level => (
-                                        <option key={level} value={level}>{level}</option>
-                                    ))}
-                                </select>
-                                <button 
-                                    onClick={() => setSelectedMasteryLevels(new Set())} 
-                                    className="text-xs text-gray-500 hover:text-gray-700 mt-1 block"
-                                >Clear</button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    {viewMode === 'list' ? 
-                        <ListView 
-                            items={filteredItems} 
-                            onUpdateItem={(id, data) => onUpdateItem(collectionName, id, data)} 
-                            onDeleteItem={(id) => onDeleteItem(collectionName, id)} 
-                            fieldLabels={fieldLabels} 
-                            selectedItemsToExport={selectedItemsToExport}
-                            toggleSelectItem={toggleSelectItem}
-                            toggleSelectAll={toggleSelectAll}
-                        /> : 
-                        <FlashcardView 
-                            items={filteredItems} 
-                            onUpdateItem={(id, data) => onUpdateItem(collectionName, id, data)} 
-                            onDeleteItem={(id) => onDeleteItem(collectionName, id)} 
-                            showMessage={showMessage} 
-                        />}
-                </div>
-            );
-        };
-        
-        const ListView = ({ items, onUpdateItem, onDeleteItem, fieldLabels, selectedItemsToExport, toggleSelectItem, toggleSelectAll }) => {
-            const { useState } = React; 
-            const [editingId, setEditingId] = useState(null);
-            const [editingItem, setEditingItem] = useState(null);
-            
-            const startEditing = (item) => {
-                setEditingId(item.id);
-                setEditingItem(item);
-            };
-            
-            const cancelEditing = () => {
-                setEditingId(null);
-                setEditingItem(null);
-            };
-            
-            const saveEdit = () => {
-                const { id, ...dataToUpdate } = editingItem;
-                onUpdateItem(id, dataToUpdate);
-                cancelEditing();
-            };
-
-            const MasterySelect = ({ value, onChange }) => (
-                <select value={value} onChange={onChange} className="bg-white border border-gray-300 rounded-md shadow-sm p-1 text-xs focus:ring-teal-500 focus:border-teal-500">
-                    <option>Never Seen</option>
-                    <option>Familiar</option>
-                    <option>Getting Close</option>
-                    <option>Great!</option>
-                </select>
-            );
-
-            if (items.length === 0) {
-                return <p className="text-gray-500 text-center">No items match your current filters. Adjust your filters or add new content.</p>;
-            }
-
-            const allFilteredItemsSelected = items.length > 0 && items.every(item => selectedItemsToExport.has(item.id));
-
-            return (
-                 <div className="space-y-4">
-                    <div className="flex items-center gap-2 mb-4 p-2 bg-stone-100 rounded-lg border">
-                        <input
-                            type="checkbox"
-                            checked={allFilteredItemsSelected}
-                            onChange={(e) => toggleSelectAll(e.target.checked)}
-                            className="w-4 h-4 text-teal-600 bg-gray-100 border-gray-300 rounded focus:ring-teal-500"
-                        />
-                        <label className="text-sm font-medium text-gray-700">Select All ({selectedItemsToExport.size} selected)</label>
-                    </div>
-
-                    {items.map(item => (
-                        <div key={item.id} className="bg-white p-4 rounded-xl border shadow-sm hover:shadow-md transition-shadow">
-                            {editingId === item.id ? (
-                                <div className="space-y-2">
-                                    {Object.keys(fieldLabels).map(field => (
-                                        <div key={field}>
-                                            <label className="text-sm font-bold text-gray-600">{fieldLabels[field]}</label>
-                                            {field === 'notes' ? (
-                                                <textarea
-                                                    rows="5" 
-                                                    value={editingItem[field]} 
-                                                    onChange={(e) => setEditingItem({...editingItem, [field]: e.target.value})}
-                                                    className="w-full p-2 border rounded-md"
-                                                ></textarea>
-                                            ) : (
-                                                <input
-                                                    type="text"
-                                                    value={editingItem[field]}
-                                                    onChange={(e) => setEditingItem({...editingItem, [field]: e.target.value})}
-                                                    className="w-full p-2 border rounded-md"
-                                                />
-                                            )}
-                                        </div>
-                                    ))}
-                                    {/* Edit Batch Name field */}
-                                    <div>
-                                        <label className="text-sm font-bold text-gray-600">Batch Name</label>
-                                        <input
-                                            type="text"
-                                            value={editingItem.batchName || ''}
-                                            onChange={(e) => setEditingItem({ ...editingItem, batchName: e.target.value })}
-                                            className="w-full p-2 border rounded-md"
-                                        />
-                                    </div>
-                                    <div className="flex gap-2 mt-2">
-                                        <button onClick={saveEdit} className="px-3 py-1 bg-green-600 text-white text-sm rounded-md hover:bg-green-700">Save</button>
-                                        <button onClick={cancelEditing} className="px-3 py-1 bg-gray-500 text-white text-sm rounded-md hover:bg-gray-600">Cancel</button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="relative">
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedItemsToExport.has(item.id)}
-                                        onChange={(e) => toggleSelectItem(item.id, e.target.checked)}
-                                        className="absolute top-2 left-2 w-5 h-5 text-teal-600 bg-gray-100 border-gray-300 rounded focus:ring-teal-500"
-                                        title="Select for export"
-                                    />
-                                    <div className="pl-8"> {/* Padding for checkbox */}
-                                        <p className="font-bold text-lg text-teal-800">{item.english}</p>
-                                        <p className="text-gray-700">{item.urdu}</p>
-                                        <p className="text-sm text-gray-500 mt-2 italic whitespace-pre-wrap">{item.notes}</p>
-                                        {item.batchName && <p className="text-xs text-gray-400 mt-1">Batch: {item.batchName}</p>}
-                                    </div>
-                                    <div className="flex flex-col items-end gap-2 flex-shrink-0 ml-auto absolute top-2 right-2">
-                                        <MasterySelect value={item.mastery} onChange={(e) => onUpdateItem(item.id, { mastery: e.target.value })} />
-                                        <div className="flex gap-2">
-                                            <button onClick={() => startEditing(item)} className="text-xs text-blue-600 hover:underline">Edit</button>
-                                            <button onClick={() => onDeleteItem(item.id)} className="text-xs text-red-600 hover:underline">Delete</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
-            );
-        };
-
-        const FlashcardView = ({ items, onUpdateItem, onDeleteItem, showMessage }) => {
-            const { useState, useEffect } = React; 
-            const [currentIndex, setCurrentIndex] = useState(0);
-            const [isFlipped, setIsFlipped] = useState(false);
-            const [shuffledItems, setShuffledItems] = useState([]);
-
-            // Initialize shuffledItems when items prop changes or on component mount
-            useEffect(() => {
-                if (items.length > 0) {
-                    setShuffledItems([...items].sort(() => 0.5 - Math.random()));
-                    setCurrentIndex(0); // Reset to first card of the new shuffled deck
-                    setIsFlipped(false);
-                } else {
-                    setShuffledItems([]);
-                    setCurrentIndex(0);
-                    setIsFlipped(false);
-                }
-            }, [items]); // Depend on 'items' prop to re-shuffle when the original list changes
-
-            // Update current item from shuffledItems
-            const currentItem = shuffledItems[currentIndex];
-
-            const goToNext = () => {
-                setCurrentIndex((prevIndex) => (prevIndex + 1) % shuffledItems.length);
-                setIsFlipped(false);
-            };
-
-            const goToPrev = () => {
-                setCurrentIndex((prevIndex) => (prevIndex - 1 + shuffledItems.length) % shuffledItems.length);
-                setIsFlipped(false);
-            };
-
-            const handleShuffle = () => {
-                if (shuffledItems.length > 1) {
-                    const newShuffled = [...items].sort(() => 0.5 - Math.random()); // Shuffle original items, not already shuffled items
-                    setShuffledItems(newShuffled);
-                    setCurrentIndex(0); // Reset to the first card of the newly shuffled deck
-                    setIsFlipped(false);
-                    showMessage('Cards shuffled!', 'info');
-                } else {
-                    showMessage('Need at least two cards to shuffle!', 'info');
-                }
-            };
-            
-            if (shuffledItems.length === 0) { // Check shuffledItems length
-                return <p className="text-gray-500 text-center py-4">No vocabulary items match your current filters for flashcard practice.</p>;
-            }
-
-
-            return (
-                 <div className="flex flex-col items-center">
-                    <div className="w-full max-w-xl h-80 mb-4 flashcard-container" onClick={() => setIsFlipped(!isFlipped)} className={isFlipped ? 'w-full max-w-xl h-80 mb-4 flashcard-container flipped' : 'w-full max-w-xl h-80 mb-4 flashcard-container'}>
-                        <div className="flashcard-inner">
-                            <div className="flashcard-front">
-                                 <p className="text-3xl font-bold text-teal-800">{currentItem.english}</p>
-                            </div>
-                            <div className="flashcard-back">
-                                <p className="text-2xl font-semibold text-gray-800">{currentItem.urdu}</p>
-                                <p className="text-sm text-gray-600 mt-4 italic whitespace-pre-wrap">{currentItem.notes}</p>
-                                {currentItem.batchName && <p className="text-xs text-gray-400 mt-1">Batch: {currentItem.batchName}</p>}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-4 mb-4">
-                        <button onClick={goToPrev} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300" disabled={shuffledItems.length <= 1}>Previous</button>
-                        <button onClick={handleShuffle} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300" disabled={shuffledItems.length <= 1}>Shuffle</button>
-                        <span className="font-semibold">{currentIndex + 1} / {shuffledItems.length}</span>
-                        <button onClick={goToNext} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300" disabled={shuffledItems.length <= 1}>Next</button>
-                    </div>
-                     <div className="flex items-center gap-4 bg-stone-100 p-3 rounded-lg border">
-                        <label className="text-sm font-medium">Mastery:</label>
-                        <select value={currentItem.mastery} onChange={(e) => onUpdateItem(currentItem.id, { mastery: e.target.value })} className="bg-white border border-gray-300 rounded-md shadow-sm p-1 text-sm focus:ring-teal-500 focus:border-teal-500">
-                             <option>Never Seen</option>
-                             <option>Familiar</option>
-                             <option>Getting Close</option>
-                             <option>Great!</option>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-gray-600">{item.batchName || 'N/A'}</td>
+                      <td className="py-3 px-4">
+                        <select
+                          value={item.masteryLevel}
+                          onChange={(e) => {
+                            handleItemChange(item.id, 'masteryLevel', e.target.value);
+                            saveItemChanges({ ...item, masteryLevel: e.target.value });
+                          }}
+                          className="bg-gray-100 border border-gray-300 text-gray-800 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        >
+                          {MASTERY_LEVELS.map(level => (
+                            <option key={level} value={level}>{level}</option>
+                          ))}
                         </select>
-                        <button onClick={() => {
-                            if(confirm('Are you sure you want to delete this card?')){
-                                onDeleteItem(currentItem.id);
-                                // Adjust index if the deleted card was the last one, or if there's only one card left
-                                if (shuffledItems.length === 1) { // If only one card, it's now empty
-                                    setCurrentIndex(0); // Reset index
-                                } else if (currentIndex === shuffledItems.length -1) { // If last card in list, go to previous
-                                    setCurrentIndex(prev => prev -1);
-                                } // Otherwise, index automatically shifts as array re-renders
-                                showMessage("Card deleted.", "info");
-                            }
-                        }} className="text-xs text-red-600 hover:underline">Delete Card</button>
-                    </div>
-                </div>
-            );
-        };
-        
-        const container = document.getElementById('root');
-        const root = ReactDOM.createRoot(container);
-        root.render(<App />);
-    </script>
-</body>
-</html>
+                      </td>
+                      <td className="py-3 px-4">
+                        <button
+                          onClick={() => confirmDeleteItem(item)}
+                          className="bg-red-400 hover:bg-red-500 text-white text-sm py-1 px-3 rounded-md shadow-sm transition duration-200"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-center text-gray-600 py-10">No {type} items found. Try generating or adding some!</p>
+          )}
+        </div>
+      )}
+
+      {/* Add Custom Item Modal */}
+      {showAddItemModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Add New {type.slice(0, -1).replace('e', '')} Item</h2> {/* Adjust for 'dialogue' */}
+            <form onSubmit={handleAddItem} className="space-y-4">
+              <div>
+                <label className="block text-gray-700 text-sm font-bold mb-2">English Translation:</label>
+                <input
+                  type="text"
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={newItem.englishTranslation}
+                  onChange={(e) => setNewItem({ ...newItem, englishTranslation: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-gray-700 text-sm font-bold mb-2">Urdu Script (Transliteration):</label>
+                <input
+                  type="text"
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={newItem.urduScriptTransliteration}
+                  onChange={(e) => setNewItem({ ...newItem, urduScriptTransliteration: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-gray-700 text-sm font-bold mb-2">Notes (Phonetic, Grammar, Contextual):</label>
+                <textarea
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px] resize-y"
+                  value={newItem.notes}
+                  onChange={(e) => setNewItem({ ...newItem, notes: e.target.value })}
+                  rows="5"
+                ></textarea>
+              </div>
+              <div>
+                <label className="block text-gray-700 text-sm font-bold mb-2">Batch Name (Optional):</label>
+                <input
+                  type="text"
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={newItem.batchName || ''}
+                  onChange={(e) => setNewItem({ ...newItem, batchName: e.target.value })}
+                  placeholder="e.g., Custom Additions"
+                />
+              </div>
+              {error && <p className="text-red-500 text-sm italic">{error}</p>}
+              <div className="flex justify-end space-x-4 mt-6">
+                <button
+                  type="button"
+                  onClick={() => { setShowAddItemModal(false); setError(''); setNewItem({ urduScriptTransliteration: '', englishTranslation: '', notes: '', masteryLevel: 'Never Seen' }); }}
+                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105"
+                >
+                  Add Item
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Delete Modal */}
+      {showConfirmDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Confirm Deletion</h2>
+            <p className="text-gray-700 mb-4">
+              Are you sure you want to delete the item: "<span className="font-semibold">{itemToDelete?.englishTranslation}</span>"? This action cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-4 mt-6">
+              <button
+                onClick={() => { setShowConfirmDeleteModal(false); setItemToDelete(null); setError(''); }}
+                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteItem}
+                className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Tailwind CSS setup (included directly for Canvas environment)
+// This script will load Tailwind CSS classes
+const TailwindCSS = () => (
+  <script src="https://cdn.tailwindcss.com"></script>
+);
+
+// Add Inter font (Google Fonts)
+const InterFont = () => (
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+);
+
+// Wrap App with necessary providers and global styles
+const Root = () => (
+  <>
+    <TailwindCSS />
+    <InterFont />
+    <style>
+      {`
+        body {
+          font-family: 'Inter', sans-serif;
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        .rotate-y-180 {
+          transform: rotateY(180deg);
+        }
+        /* Custom scrollbar for multi-select */
+        select[multiple] {
+          -webkit-overflow-scrolling: touch; /* Enable smooth scrolling on iOS */
+        }
+        select[multiple]::-webkit-scrollbar {
+          width: 8px;
+        }
+        select[multiple]::-webkit-scrollbar-track {
+          background: #f1f1f1;
+          border-radius: 4px;
+        }
+        select[multiple]::-webkit-scrollbar-thumb {
+          background: #888;
+          border-radius: 4px;
+        }
+        select[multiple]::-webkit-scrollbar-thumb:hover {
+          background: #555;
+        }
+      `}
+    </style>
+    <App />
+  </>
+);
+
+export default Root;
+
