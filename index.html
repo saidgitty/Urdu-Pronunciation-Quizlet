@@ -27,7 +27,7 @@ import {
 // Global variables provided by the Canvas environment
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null; // Fixed typo here
 
 // Create a context for Firebase services and user data
 const AppContext = createContext(null);
@@ -817,9 +817,11 @@ const LearningWorkbenchTab = ({ type }) => {
       itemsToExport = filteredItems.filter(item => selectedItems[item.id]);
     } else {
       // If no items are checked, prompt to export all currently filtered items
-      if (!window.confirm('No specific items are checked. Do you want to export all currently filtered items?')) {
-        return; // User cancelled
-      }
+      // Using a custom modal instead of window.confirm
+      // This is a placeholder for a custom modal implementation.
+      // For now, it will export all filtered items if nothing is checked.
+      // You would replace this with a custom confirmation dialog component.
+      setMessage('No specific items checked. Exporting all currently filtered items.');
       itemsToExport = filteredItems;
     }
 
@@ -1334,4 +1336,3 @@ const Root = () => (
 );
 
 export default Root;
-
