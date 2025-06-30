@@ -16,14 +16,18 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, linkWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, addDoc, onSnapshot, collection, query, deleteDoc, updateDoc, getDocs, where, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         window.firebase = {
             initializeApp,
             getAuth,
             signInAnonymously,
             onAuthStateChanged,
-            signInWithCustomToken,
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword,
+            signOut,
+            linkWithCredential, // Expose for linking anonymous to email
+            EmailAuthProvider,   // Expose EmailAuthProvider for linking
             getFirestore,
             doc,
             setDoc,
@@ -35,11 +39,7 @@
             updateDoc,
             getDocs,
             where,
-            writeBatch,
-            // Expose Email/Password and SignOut functions
-            createUserWithEmailAndPassword,
-            signInWithEmailAndPassword,
-            signOut
+            writeBatch
         };
     </script>
     <style>
@@ -73,7 +73,7 @@
         // Component: App (Main Application Container)
         const App = () => {
             const { useState, useEffect, useCallback, useMemo, useRef } = React;
-            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, doc, onSnapshot, collection, query, addDoc, deleteDoc, updateDoc, getDocs, where, writeBatch, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } = window.firebase;
+            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, linkWithCredential, EmailAuthProvider, getFirestore, doc, onSnapshot, collection, query, addDoc, deleteDoc, updateDoc, getDocs, where, writeBatch } = window.firebase;
 
             const [activeTab, setActiveTab] = useState('generate');
             const [userId, setUserId] = useState(null);
@@ -100,12 +100,12 @@
             // Email/Password Auth states
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
-            const [authProcessing, setAuthProcessing] = useState(false);
+            const [authProcessing, setAuthProcessing] = useState(false); // For disabling auth buttons
 
 
             // Firebase configuration for YOUR project (USER-PROVIDED)
             const firebaseConfig = {
-                apiKey: "AIzaSyD2CEqxNwXCia44M5PZfFNoJcv46f0EaEI", // UPDATED API KEY
+                apiKey: "AIzaSyD2CEqxNwXCia44M5PZfFNoJcv46f0EaEI",
                 authDomain: "productivity-planning-db833.firebaseapp.com",
                 projectId: "productivity-planning-db833",
                 storageBucket: "productivity-planning-db833.firebasestorage.app",
@@ -125,70 +125,70 @@
                         const firestore = getFirestore(app);
                         setDb(firestore);
 
-                        const userPromise = new Promise(resolve => {
-                            const unsubscribe = onAuthStateChanged(auth, user => {
-                                unsubscribe(); 
-                                resolve(user);
-                            });
-                        });
-
-                        let user = await userPromise;
-
-                        if (!user) { 
-                            try {
-                                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                                    await signInWithCustomToken(auth, __initial_auth_token);
-                                } else {
-                                    await signInAnonymously(auth);
-                                }
-                            } catch (error) {
-                                console.error("Initial sign-in attempt failed, trying fallback:", error);
-                                if (error.code === 'auth/invalid-custom-token' || error.code === 'auth/invalid-claims' || error.code === 'auth/custom-token-mismatch') {
-                                    showMessage("Custom token invalid or mismatched. Trying anonymous sign-in...", 'info', 3000);
-                                    try {
-                                        const credential = await signInAnonymously(auth);
-                                        user = credential.user;
-                                        showMessage("Signed in anonymously. Your data will persist.", 'success');
-                                    } catch (anonError) {
-                                        console.error("Anonymous sign-in also failed:", anonError);
-                                        showMessage("Authentication fully failed. App may not save data. Check Firebase config.", 'error');
-                                    }
-                                } else {
-                                     showMessage(`Authentication failed: ${error.message}. App may not save data.`, 'error');
-                                }
-                            } finally {
-                                setIsLoading(false); 
+                        // Ensure an anonymous user is signed in to always have a UID for Firestore access
+                        // This bypasses __initial_auth_token issues and provides a consistent base.
+                        try {
+                            const currentAuthUser = auth.currentUser;
+                            if (currentAuthUser && !currentAuthUser.isAnonymous) {
+                                // User already signed in with a persistent method (e.g., email/password from previous session)
+                                console.log("User already signed in with persistent method. UID:", currentAuthUser.uid);
+                                setUserId(currentAuthUser.uid);
+                            } else if (currentAuthUser && currentAuthUser.isAnonymous) {
+                                // User is already anonymously signed in (from previous session)
+                                console.log("User already anonymously signed in. UID:", currentAuthUser.uid);
+                                setUserId(currentAuthUser.uid);
                             }
-                        } else { // User was already authenticated (from previous session or successful token/anon sign-in)
-                            setIsLoading(false); 
+                             else {
+                                // No user signed in, initiate anonymous sign-in
+                                console.log("No user signed in. Attempting anonymous sign-in.");
+                                const credential = await signInAnonymously(auth);
+                                console.log("Anonymous sign-in successful. UID:", credential.user.uid);
+                                setUserId(credential.user.uid);
+                                showMessage("Signed in anonymously. Your data will persist on this device.", 'success');
+                            }
+                        } catch (error) {
+                            console.error("Initial authentication attempt (anonymous) failed:", error);
+                            showMessage("Failed to sign in. App may not save data. Check Firebase config and rules.", 'error');
+                            // If anonymous sign-in fails, userId remains null, and the app will operate without persistence.
+                        } finally {
+                            setIsLoading(false); // Global loading ends after initial auth attempt
                         }
                         
-                        if (user) { 
-                            setUserId(user.uid);
-                            
-                            const unsubscribes = [];
+                        // Set up Firestore subscriptions based on userId and db.
+                        // These will trigger when userId is set after successful authentication.
+                        // onAuthStateChanged is still important if a user switches from anonymous to email/password later
+                        onAuthStateChanged(auth, (user) => {
+                            if (user) {
+                                setUserId(user.uid); // Update userId if it changes (e.g., anonymous links to email)
+                            } else {
+                                setUserId(null); // Clear userId if truly signed out
+                            }
+                        });
 
+
+                        // Setup live data subscriptions only if userId is available (from initial sign-in or later changes)
+                        // This ensures subscriptions always use the correct UID.
+                        const unsubscribes = [];
+                        if (userId && db) { // This will now be true after the initial anonymous sign-in
                             const setupCollectionListener = (colName, setter) => {
-                                const q = query(collection(firestore, "artifacts", appId, "users", user.uid, colName));
+                                const q = query(collection(firestore, "artifacts", appId, "users", userId, colName));
                                 const unsubscribe = onSnapshot(q, (snapshot) => {
                                     setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                                 }, (error) => {
                                     console.error(`Error fetching ${colName}: `, error);
                                     showMessage(`Failed to load ${colName}.`, 'error');
                                 });
-                                unsubscribes.push(unsubscribe);
+                                return unsubscribe;
                             };
 
-                            setupCollectionListener('vocabulary', setVocabulary);
-                            setupCollectionListener('dialogues', setDialogues);
-                            setupCollectionListener('grammar', setGrammar);
-
-                            return () => unsubscribes.forEach(unsub => unsub());
-
-                        } else {
-                            // If, after all attempts, user is still null, ensure isLoading is false
-                            setIsLoading(false); 
+                            unsubscribes.push(setupCollectionListener('vocabulary', setVocabulary));
+                            unsubscribes.push(setupCollectionListener('dialogues', setDialogues));
+                            unsubscribes.push(setupCollectionListener('grammar', setGrammar));
                         }
+
+                        // Cleanup subscriptions on component unmount
+                        return () => unsubscribes.forEach(unsub => unsub());
+
                     } catch (e) {
                         console.error("Firebase initialization error (top level):", e);
                         showMessage("Could not initialize the application. Check console for details.", 'error');
@@ -197,7 +197,7 @@
                 };
 
                 initFirebase();
-            }, []);
+            }, [userId]); // Depend on userId to re-run subscriptions if user changes
 
             // Global Message Box handler
             const showMessage = (text, type = 'info', duration = 4000) => {
@@ -284,7 +284,6 @@
                     if (item.english && item.urdu) { 
                         parsedItems.push(item);
                     } else {
-                        // Log skipped malformed item for debugging
                         console.warn("Skipped malformed item during parsing:", block);
                     }
                 });
@@ -407,7 +406,59 @@
                         <header className="text-center mb-8">
                             <h1 className="text-4xl md:text-5xl font-bold text-teal-800">Hyderabadi Urdu Quizlet Builder</h1>
                             <p className="text-gray-500 mt-2">Your personal workbench for generating and curating Urdu learning content.</p>
-                            {userId && <p className="text-xs text-gray-400 mt-2 font-mono">Session ID: {userId}</p>}
+                            {/* Display Authentication Status */}
+                            {!userId ? (
+                                <div className="mt-4 p-4 bg-orange-100 border border-orange-200 rounded-lg shadow-sm">
+                                    <h3 className="text-orange-700 font-semibold mb-2">Sign In / Sign Up to save your data across devices</h3>
+                                    <p className="text-gray-600 mb-4">You are currently using an anonymous session. Your data is saved, but linking an email makes it accessible from anywhere.</p>
+                                    
+                                    <input
+                                        type="email"
+                                        placeholder="Email"
+                                        className="w-full max-w-xs p-2 border border-gray-300 rounded-md mb-2 focus:ring-teal-500 focus:border-teal-500"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        disabled={authProcessing}
+                                    />
+                                    <input
+                                        type="password"
+                                        placeholder="Password"
+                                        className="w-full max-w-xs p-2 border border-gray-300 rounded-md mb-4 focus:ring-teal-500 focus:border-teal-500"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        disabled={authProcessing}
+                                    />
+                                    <div className="flex justify-center gap-2">
+                                        <button
+                                            onClick={handleEmailSignIn}
+                                            className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow hover:bg-indigo-700 disabled:opacity-50"
+                                            disabled={!email || !password || authProcessing}
+                                        >
+                                            {authProcessing ? 'Signing In...' : 'Sign In'}
+                                        </button>
+                                        <button
+                                            onClick={handleEmailSignUp}
+                                            className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg shadow hover:bg-green-700 disabled:opacity-50"
+                                            disabled={!email || !password || authProcessing}
+                                        >
+                                            {authProcessing ? 'Signing Up...' : 'Sign Up'}
+                                        </button>
+                                    </div>
+                                    <p className="text-sm text-gray-500 mt-4">
+                                        Signing in will link your anonymous data to your account.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="mt-4 p-3 bg-teal-100 border border-teal-200 rounded-lg shadow-sm flex items-center justify-between text-teal-800 font-semibold text-sm">
+                                    <span>Signed in as: {auth.currentUser?.email || 'Anonymous'} (ID: <span className="font-mono break-all">{userId}</span>)</span>
+                                    <button
+                                        onClick={handleSignOut}
+                                        className="px-3 py-1 bg-red-500 text-white rounded-md text-xs hover:bg-red-600 shadow-sm"
+                                    >
+                                        Sign Out
+                                    </button>
+                                </div>
+                            )}
                         </header>
                         
                         {message.text && <MessageBox message={message.text} type={message.type} />}
@@ -1102,6 +1153,3 @@
     </script>
 </body>
 </html>
-
-
-
