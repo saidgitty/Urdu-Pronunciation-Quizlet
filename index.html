@@ -1,1339 +1,1101 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
-import { initializeApp } from 'firebase/app';
-import {
-  getAuth,
-  signInAnonymously,
-  signInWithCustomToken,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged
-} from 'firebase/auth';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  collection,
-  query,
-  onSnapshot,
-  where,
-  getDocs
-} from 'firebase/firestore';
-
-// Global variables provided by the Canvas environment
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? initialAuthToken : null; // Fixed typo here
-
-// Create a context for Firebase services and user data
-const AppContext = createContext(null);
-
-// Custom hook to use the app context
-const useAppContext = () => useContext(AppContext);
-
-// Utility function to generate a unique ID (for non-authenticated users or new items)
-const generateUniqueId = () => crypto.randomUUID();
-
-// Function to replace internal newlines with '//' for Quizlet export
-const formatNotesForQuizlet = (notes) => {
-  return notes ? notes.replace(/\n/g, ' // ') : '';
-};
-
-// Mastery Levels
-const MASTERY_LEVELS = [
-  'Never Seen',
-  'Familiar',
-  'Getting Close',
-  'Mastered',
-];
-
-// Main App Component
-const App = () => {
-  const [firebaseApp, setFirebaseApp] = useState(null);
-  const [db, setDb] = useState(null);
-  const [auth, setAuth] = useState(null);
-  const [userId, setUserId] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  const [userEmail, setUserEmail] = useState(null);
-
-  // Initialize Firebase and set up authentication listener
-  useEffect(() => {
-    try {
-      const app = initializeApp(firebaseConfig);
-      const firestore = getFirestore(app);
-      const firebaseAuth = getAuth(app);
-
-      setFirebaseApp(app);
-      setDb(firestore);
-      setAuth(firebaseAuth);
-
-      // Set up auth state change listener
-      const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
-        if (user) {
-          // User is signed in
-          setUserId(user.uid);
-          setUserEmail(user.email);
-          console.log('User signed in:', user.uid);
-        } else {
-          // User is signed out or not yet signed in
-          console.log('No user signed in. Attempting anonymous sign-in...');
-          try {
-            if (initialAuthToken) {
-              await signInWithCustomToken(firebaseAuth, initialAuthToken);
-              console.log('Signed in with custom token.');
-            } else {
-              await signInAnonymously(firebaseAuth);
-              console.log('Signed in anonymously.');
-            }
-          } catch (error) {
-            console.error('Error during initial sign-in:', error);
-            // Fallback: If anonymous sign-in fails, use a random ID for this session
-            setUserId(generateUniqueId());
-            setUserEmail(null);
-          }
-        }
-        setIsAuthReady(true);
-      });
-
-      // Cleanup subscription on unmount
-      return () => unsubscribe();
-    } catch (error) {
-      console.error('Error initializing Firebase:', error);
-      setIsAuthReady(true); // Mark ready even on error to avoid infinite loading
-    }
-  }, []);
-
-  // Provide the context value to children
-  const contextValue = { firebaseApp, db, auth, userId, isAuthReady, userEmail, setUserEmail };
-
-  if (!isAuthReady) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <div className="text-lg text-gray-700">Loading application...</div>
-      </div>
-    );
-  }
-
-  return (
-    <AppContext.Provider value={contextValue}>
-      <div className="min-h-screen bg-gray-100 font-inter text-gray-800">
-        <Header />
-        <MainContent />
-      </div>
-    </AppContext.Provider>
-  );
-};
-
-// Header Component with Auth
-const Header = () => {
-  const { auth, userId, userEmail, setUserEmail } = useAppContext();
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authMode, setAuthMode] = useState('signIn'); // 'signIn' or 'signUp'
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [authMessage, setAuthMessage] = useState('');
-
-  const handleAuthAction = async (e) => {
-    e.preventDefault();
-    setAuthError('');
-    setAuthMessage('');
-    try {
-      if (authMode === 'signIn') {
-        await signInWithEmailAndPassword(auth, email, password);
-        setAuthMessage('Signed in successfully!');
-      } else {
-        await createUserWithEmailAndPassword(auth, email, password);
-        setAuthMessage('Account created and signed in successfully!');
-      }
-      setShowAuthModal(false);
-      setEmail('');
-      setPassword('');
-    } catch (error) {
-      console.error('Authentication error:', error);
-      setAuthError(error.message);
-    }
-  };
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-      setAuthMessage('Signed out successfully. You are now signed in anonymously.');
-      setUserEmail(null); // Clear email on sign out
-    } catch (error) {
-      console.error('Sign out error:', error);
-      setAuthError(error.message);
-    }
-  };
-
-  return (
-    <header className="bg-gradient-to-r from-blue-600 to-purple-700 p-4 shadow-lg rounded-b-lg">
-      <div className="container mx-auto flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-white tracking-wide">
-          Hyderabadi Urdu Learning Assistant
-        </h1>
-        <div className="flex items-center space-x-4">
-          {userEmail ? (
-            <>
-              <span className="text-white text-sm md:text-base">Welcome, {userEmail}</span>
-              <button
-                onClick={handleSignOut}
-                className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-              >
-                Sign Out
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="text-white text-sm md:text-base">
-                User ID: <span className="font-mono text-xs md:text-sm bg-blue-700 px-2 py-1 rounded-md">{userId}</span>
-              </span>
-              <button
-                onClick={() => { setShowAuthModal(true); setAuthMode('signIn'); setAuthError(''); setAuthMessage(''); }}
-                className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-              >
-                Sign In / Sign Up
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {showAuthModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-              {authMode === 'signIn' ? 'Sign In' : 'Sign Up'}
-            </h2>
-            <form onSubmit={handleAuthAction} className="space-y-4">
-              <div>
-                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="email">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  id="email"
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="password">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  id="password"
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-              {authError && <p className="text-red-500 text-sm italic">{authError}</p>}
-              {authMessage && <p className="text-green-500 text-sm italic">{authMessage}</p>}
-              <div className="flex items-center justify-between mt-6">
-                <button
-                  type="submit"
-                  className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out transform hover:scale-105"
-                >
-                  {authMode === 'signIn' ? 'Sign In' : 'Sign Up'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAuthMode(authMode === 'signIn' ? 'signUp' : 'signIn')}
-                  className="inline-block align-baseline font-bold text-sm text-blue-500 hover:text-blue-800"
-                >
-                  {authMode === 'signIn' ? 'Need an account? Sign Up' : 'Already have an account? Sign In'}
-                </button>
-              </div>
-            </form>
-            <button
-              onClick={() => setShowAuthModal(false)}
-              className="mt-6 w-full bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline transition duration-300 ease-in-out"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-    </header>
-  );
-};
-
-// Main Content Area
-const MainContent = () => {
-  const [activeTab, setActiveTab] = useState('generate'); // 'generate', 'vocabulary', 'dialogues', 'grammarExamples'
-
-  return (
-    <div className="container mx-auto p-4 md:p-6 lg:p-8 mt-6 bg-white rounded-xl shadow-xl">
-      <div className="flex border-b border-gray-200">
-        <TabButton tabName="generate" currentTab={activeTab} setActiveTab={setActiveTab}>
-          Generate Content
-        </TabButton>
-        <TabButton tabName="vocabulary" currentTab={activeTab} setActiveTab={setActiveTab}>
-          Vocabulary
-        </TabButton>
-        <TabButton tabName="dialogues" currentTab={activeTab} setActiveTab={setActiveTab}>
-          Dialogues
-        </TabButton>
-        <TabButton tabName="grammarExamples" currentTab={activeTab} setActiveTab={setActiveTab}>
-          Grammar Examples
-        </TabButton>
-      </div>
-
-      <div className="py-6">
-        {activeTab === 'generate' && <ContentGenerationTab />}
-        {activeTab === 'vocabulary' && <LearningWorkbenchTab type="vocabulary" />}
-        {activeTab === 'dialogues' && <LearningWorkbenchTab type="dialogues" />}
-        {activeTab === 'grammarExamples' && <LearningWorkbenchTab type="grammarExamples" />}
-      </div>
-    </div>
-  );
-};
-
-// Reusable Tab Button
-const TabButton = ({ tabName, currentTab, setActiveTab, children }) => (
-  <button
-    className={`py-3 px-6 text-lg font-medium rounded-t-lg transition duration-300 ease-in-out ${
-      currentTab === tabName
-        ? 'bg-blue-500 text-white shadow-md'
-        : 'text-gray-700 hover:bg-gray-200 hover:text-blue-600'
-    }`}
-    onClick={() => setActiveTab(tabName)}
-  >
-    {children}
-  </button>
-);
-
-// Content Generation Tab
-const ContentGenerationTab = () => {
-  const { db, userId } = useAppContext();
-  const [prompt, setPrompt] = useState('');
-  const [generatedContent, setGeneratedContent] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-  const [showBatchModal, setShowBatchModal] = useState(false);
-  const [batchName, setBatchName] = useState('');
-  const [itemsToLoad, setItemsToLoad] = useState([]);
-  const [contentIdeasLoading, setContentIdeasLoading] = useState(false);
-
-  // Function to call Gemini API for content generation
-  const generateContent = async () => {
-    if (!prompt.trim()) {
-      setError('Please enter a prompt.');
-      return;
-    }
-    setIsLoading(true);
-    setError('');
-    setMessage('');
-    setGeneratedContent([]);
-
-    // Construct the prompt for Gemini
-    const systemInstruction = `You are an expert in conversational Hyderabadi Urdu for home and family use, especially for teaching a young child. Generate learning materials with precise phonetic hints and concise grammar/contextual notes. Always provide formal sentence structures.
-    
-    Output format for each item:
-    {
-      "urduScriptTransliteration": "Urdu: سلام (Salam)",
-      "englishTranslation": "Hello",
-      "notes": "Phonetic hints (tongue/lip position, aspiration, comparisons to English/French/Spanish sounds if unique). Grammar rule explanation if applicable. Contextual usage notes for nuanced words."
-    }
-    
-    Ensure all phonetic hints are concise and focus only on sounds likely to be incorrect for an English speaker. Avoid redundant descriptions. For grammar rules, explain the rule shown in that specific phrase/sentence concisely. For contextual usage, provide insights into how, when, or where each word is typically used, especially for vocabulary items.`;
-
-    const userPrompt = `Generate content based on the following request, formatted as a JSON array of objects as specified in the system instruction: "${prompt}"`;
-
-    let chatHistory = [];
-    chatHistory.push({ role: "user", parts: [{ text: systemInstruction }, { text: userPrompt }] });
-
-    const payload = {
-      contents: chatHistory,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "ARRAY",
-          items: {
-            type: "OBJECT",
-            properties: {
-              "urduScriptTransliteration": { "type": "STRING" },
-              "englishTranslation": { "type": "STRING" },
-              "notes": { "type": "STRING" }
-            },
-            "propertyOrdering": ["urduScriptTransliteration", "englishTranslation", "notes"]
-          }
-        }
-      }
-    };
-
-    const apiKey = ""; // API key will be provided by Canvas runtime
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-    try {
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-
-      if (result.candidates && result.candidates.length > 0 &&
-          result.candidates[0].content && result.candidates[0].content.parts &&
-          result.candidates[0].content.parts.length > 0) {
-        const jsonString = result.candidates[0].content.parts[0].text;
-        const parsedContent = JSON.parse(jsonString);
-        setGeneratedContent(parsedContent);
-        setMessage('Content generated successfully! Review and load to your library.');
-      } else {
-        setError('Failed to generate content. Please try a different prompt.');
-        console.error('Gemini API response error:', result);
-      }
-    } catch (err) {
-      setError(`Error generating content: ${err.message}. Please check your prompt and try again.`);
-      console.error('Fetch error:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Function to suggest content ideas based on existing library
-  const suggestContentIdeas = async () => {
-    if (!userId || !db) {
-      setError('User not authenticated or database not ready.');
-      return;
-    }
-    setContentIdeasLoading(true);
-    setError('');
-    setMessage('');
-
-    try {
-      const vocabSnapshot = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/vocabulary`));
-      const dialoguesSnapshot = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/dialogues`));
-      const grammarSnapshot = await getDocs(collection(db, `artifacts/${appId}/users/${userId}/grammarExamples`));
-
-      const existingContent = {
-        vocabulary: vocabSnapshot.docs.map(doc => doc.data()),
-        dialogues: dialoguesSnapshot.docs.map(doc => doc.data()),
-        grammarExamples: grammarSnapshot.docs.map(doc => doc.data()),
-      };
-
-      const existingContentSummary = `Existing vocabulary: ${existingContent.vocabulary.map(v => v.englishTranslation).join(', ')}.
-      Existing dialogues: ${existingContent.dialogues.map(d => d.englishTranslation).join(', ')}.
-      Existing grammar examples: ${existingContent.grammarExamples.map(g => g.englishTranslation).join(', ')}.`;
-
-      const systemInstruction = `You are an intelligent assistant for a Hyderabadi Urdu learning app. Based on the user's existing learning library, suggest new and relevant content ideas for vocabulary, dialogues, or grammar examples. Avoid suggesting content that is already present. Provide 3-5 distinct ideas.`;
-
-      const userPrompt = `Given the user's current learning progress and existing content:
-      ${existingContentSummary}
-      
-      Suggest new ideas for Hyderabadi Urdu learning content. Focus on conversational, family-oriented topics, especially for interacting with a child. Provide concise suggestions.`;
-
-      let chatHistory = [];
-      chatHistory.push({ role: "user", parts: [{ text: systemInstruction }, { text: userPrompt }] });
-
-      const payload = {
-        contents: chatHistory,
-        generationConfig: {
-          responseMimeType: "text/plain", // Request plain text for ideas
-        }
-      };
-
-      const apiKey = "";
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-
-      if (result.candidates && result.candidates.length > 0 &&
-          result.candidates[0].content && result.candidates[0].content.parts &&
-          result.candidates[0].content.parts.length > 0) {
-        const ideas = result.candidates[0].content.parts[0].text;
-        setPrompt(ideas); // Populate prompt with ideas
-        setMessage('Here are some content ideas based on your library. Feel free to edit the prompt!');
-      } else {
-        setError('Failed to get content ideas. Please try again.');
-        console.error('Gemini API response error for ideas:', result);
-      }
-    } catch (err) {
-      setError(`Error fetching content ideas: ${err.message}`);
-      console.error('Fetch error for ideas:', err);
-    } finally {
-      setContentIdeasLoading(false);
-    }
-  };
-
-
-  // Function to load generated content to a specific type (vocabulary, dialogues, grammarExamples)
-  const handleLoadToLibrary = async (type) => {
-    if (!userId || !db) {
-      setError('User not authenticated or database not ready.');
-      return;
-    }
-    setItemsToLoad(generatedContent.map(item => ({ ...item, type })));
-    setShowBatchModal(true);
-  };
-
-  // Confirm batch name and add items to Firestore
-  const confirmBatchLoad = async () => {
-    if (!batchName.trim()) {
-      setError('Batch name cannot be empty.');
-      return;
-    }
-
-    setShowBatchModal(false);
-    setIsLoading(true);
-    setError('');
-    setMessage('');
-
-    let duplicatesSkipped = 0;
-    const itemsAdded = [];
-
-    for (const item of itemsToLoad) {
-      const collectionRef = collection(db, `artifacts/${appId}/users/${userId}/${item.type}`);
-      const q = query(
-        collectionRef,
-        where('englishTranslation', '==', item.englishTranslation),
-        where('urduScriptTransliteration', '==', item.urduScriptTransliteration)
-      );
-      const querySnapshot = await getDocs(q);
-
-      if (querySnapshot.empty) {
-        try {
-          await addDoc(collectionRef, {
-            ...item,
-            batchName: batchName,
-            masteryLevel: 'Never Seen', // Default mastery level
-            createdAt: new Date(),
-          });
-          itemsAdded.push(item);
-        } catch (err) {
-          console.error(`Error adding item to ${item.type}:`, err);
-          setError(`Failed to add some items. Check console for details.`);
-        }
-      } else {
-        duplicatesSkipped++;
-      }
-    }
-
-    setGeneratedContent([]); // Clear generated content after loading
-    setPrompt(''); // Clear prompt
-    setBatchName(''); // Clear batch name
-    setIsLoading(false);
-    setMessage(`Successfully added ${itemsAdded.length} items to your library. ${duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicates skipped.` : ''}`);
-  };
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-gray-800">Intelligent Content Generation</h2>
-      <div className="p-6 bg-blue-50 border border-blue-200 rounded-lg shadow-inner">
-        <p className="text-blue-800 text-sm">
-          Enter a natural language prompt (e.g., "Give me 10 words about kitchen items with phonetic notes," "Explain how to form past tense sentences with 'to eat' and 'to drink'," "Provide 5 sentences for talking to a child about bedtime, with transliterations and notes.").
-        </p>
-      </div>
-      <textarea
-        className="w-full p-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[120px] resize-y"
-        placeholder="Enter your content generation prompt here..."
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        rows="4"
-      ></textarea>
-      <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-4">
-        <button
-          onClick={generateContent}
-          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center"
-          disabled={isLoading || contentIdeasLoading}
-        >
-          {isLoading ? (
-            <svg className="animate-spin h-5 w-5 mr-3 text-white" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          ) : (
-            'Generate Content'
-          )}
-        </button>
-        <button
-          onClick={suggestContentIdeas}
-          className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center"
-          disabled={isLoading || contentIdeasLoading}
-        >
-          {contentIdeasLoading ? (
-            <svg className="animate-spin h-5 w-5 mr-3 text-white" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          ) : (
-            'Help me think of ideas for content'
-          )}
-        </button>
-      </div>
-
-      {error && <p className="text-red-500 mt-4 text-center font-medium">{error}</p>}
-      {message && <p className="text-green-600 mt-4 text-center font-medium">{message}</p>}
-
-      {generatedContent.length > 0 && (
-        <div className="mt-8 p-6 bg-gray-50 rounded-lg shadow-inner">
-          <h3 className="text-xl font-semibold text-gray-800 mb-4">Generated Content (Review before adding)</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {generatedContent.map((item, index) => (
-              <div key={index} className="bg-white p-5 rounded-lg shadow-md border border-gray-200">
-                <p className="font-bold text-lg text-blue-700 mb-2">{item.englishTranslation}</p>
-                <p className="text-gray-900 mb-2">
-                  <span className="font-semibold">Urdu:</span> {item.urduScriptTransliteration}
-                </p>
-                <p className="text-gray-700 text-sm">
-                  <span className="font-semibold">Notes:</span> {item.notes}
-                </p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-6 flex flex-col md:flex-row justify-end space-y-3 md:space-y-0 md:space-x-4">
-            <button
-              onClick={() => handleLoadToLibrary('vocabulary')}
-              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-            >
-              Load to Vocabulary
-            </button>
-            <button
-              onClick={() => handleLoadToLibrary('dialogues')}
-              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-            >
-              Load to Dialogues
-            </button>
-            <button
-              onClick={() => handleLoadToLibrary('grammarExamples')}
-              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-            >
-              Load to Grammar Examples
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showBatchModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Enter Batch Name</h2>
-            <p className="text-gray-700 mb-4">
-              Please provide a name for this batch of items (e.g., "Kitchen Verbs - Week 1", "Greetings for Kids").
-              This helps organize your learning materials.
-            </p>
-            <input
-              type="text"
-              className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
-              value={batchName}
-              onChange={(e) => setBatchName(e.target.value)}
-              placeholder="e.g., Daily Phrases, Food Vocabulary"
-              required
-            />
-            {error && <p className="text-red-500 text-sm italic mb-4">{error}</p>}
-            <div className="flex justify-end space-x-4">
-              <button
-                onClick={() => { setShowBatchModal(false); setError(''); setBatchName(''); setItemsToLoad([]); }}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmBatchLoad}
-                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105"
-              >
-                Add to Library
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Learning Workbench Tab (Vocabulary, Dialogues, Grammar Examples)
-const LearningWorkbenchTab = ({ type }) => {
-  const { db, userId } = useAppContext();
-  const [items, setItems] = useState([]);
-  const [filteredItems, setFilteredItems] = useState([]);
-  const [loadingItems, setLoadingItems] = useState(true);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-
-  const [filterBatch, setFilterBatch] = useState([]);
-  const [filterMastery, setFilterMastery] = useState([]);
-  const [availableBatches, setAvailableBatches] = useState([]);
-  const [showAddItemModal, setShowAddItemModal] = useState(false);
-  const [newItem, setNewItem] = useState({
-    urduScriptTransliteration: '',
-    englishTranslation: '',
-    notes: '',
-    masteryLevel: 'Never Seen',
-  });
-  const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState(null);
-  const [selectedItems, setSelectedItems] = useState({}); // For Quizlet export checkboxes
-  const [flashcardMode, setFlashcardMode] = useState(false);
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [isCardFlipped, setIsCardFlipped] = useState(false);
-
-  // Fetch items from Firestore and set up real-time listener
-  useEffect(() => {
-    if (!db || !userId) return;
-
-    setLoadingItems(true);
-    const collectionRef = collection(db, `artifacts/${appId}/users/${userId}/${type}`);
-    const q = query(collectionRef);
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedItems = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setItems(fetchedItems);
-      setLoadingItems(false);
-
-      // Extract unique batch names for filtering
-      const batches = [...new Set(fetchedItems.map(item => item.batchName).filter(Boolean))];
-      setAvailableBatches(batches);
-    }, (err) => {
-      console.error(`Error fetching ${type} items:`, err);
-      setError(`Failed to load ${type} items.`);
-      setLoadingItems(false);
-    });
-
-    return () => unsubscribe(); // Cleanup listener on unmount
-  }, [db, userId, type]);
-
-  // Apply filters whenever items, filterBatch, or filterMastery change
-  useEffect(() => {
-    let tempItems = [...items];
-
-    if (filterBatch.length > 0) {
-      tempItems = tempItems.filter(item => filterBatch.includes(item.batchName));
-    }
-    if (filterMastery.length > 0) {
-      tempItems = tempItems.filter(item => filterMastery.includes(item.masteryLevel));
-    }
-    setFilteredItems(tempItems);
-    // Reset selected items when filters change
-    setSelectedItems({});
-    // Reset flashcard index if filtered items change
-    setCurrentCardIndex(0);
-    setIsCardFlipped(false);
-  }, [items, filterBatch, filterMastery]);
-
-  // Handle changes to an item's field
-  const handleItemChange = (id, field, value) => {
-    setFilteredItems(prevItems =>
-      prevItems.map(item =>
-        item.id === id ? { ...item, [field]: value } : item
-      )
-    );
-  };
-
-  // Save changes to an item in Firestore
-  const saveItemChanges = async (item) => {
-    if (!db || !userId) return;
-    try {
-      const itemRef = doc(db, `artifacts/${appId}/users/${userId}/${type}`, item.id);
-      await updateDoc(itemRef, item);
-      setMessage('Item updated successfully!');
-    } catch (err) {
-      console.error('Error updating item:', err);
-      setError('Failed to update item.');
-    }
-  };
-
-  // Add new custom item
-  const handleAddItem = async (e) => {
-    e.preventDefault();
-    if (!db || !userId) {
-      setError('User not authenticated or database not ready.');
-      return;
-    }
-    if (!newItem.englishTranslation || !newItem.urduScriptTransliteration) {
-      setError('English Translation and Urdu Transliteration are required.');
-      return;
-    }
-
-    try {
-      const collectionRef = collection(db, `artifacts/${appId}/users/${userId}/${type}`);
-      await addDoc(collectionRef, {
-        ...newItem,
-        batchName: newItem.batchName || 'Custom', // Default batch name for custom items
-        createdAt: new Date(),
-      });
-      setMessage('New item added successfully!');
-      setShowAddItemModal(false);
-      setNewItem({
-        urduScriptTransliteration: '',
-        englishTranslation: '',
-        notes: '',
-        masteryLevel: 'Never Seen',
-      });
-    } catch (err) {
-      console.error('Error adding new item:', err);
-      setError('Failed to add new item.');
-    }
-  };
-
-  // Delete item confirmation
-  const confirmDeleteItem = (item) => {
-    setItemToDelete(item);
-    setShowConfirmDeleteModal(true);
-  };
-
-  // Execute delete item
-  const handleDeleteItem = async () => {
-    if (!db || !userId || !itemToDelete) return;
-    try {
-      const itemRef = doc(db, `artifacts/${appId}/users/${userId}/${type}`, itemToDelete.id);
-      await deleteDoc(itemRef);
-      setMessage('Item deleted successfully!');
-      setShowConfirmDeleteModal(false);
-      setItemToDelete(null);
-    } catch (err) {
-      console.error('Error deleting item:', err);
-      setError('Failed to delete item.');
-    }
-  };
-
-  // Quizlet Export Logic
-  const handleExportToQuizlet = () => {
-    let itemsToExport = [];
-    const selectedCount = Object.values(selectedItems).filter(val => val).length;
-
-    if (selectedCount > 0) {
-      itemsToExport = filteredItems.filter(item => selectedItems[item.id]);
-    } else {
-      // If no items are checked, prompt to export all currently filtered items
-      // Using a custom modal instead of window.confirm
-      // This is a placeholder for a custom modal implementation.
-      // For now, it will export all filtered items if nothing is checked.
-      // You would replace this with a custom confirmation dialog component.
-      setMessage('No specific items checked. Exporting all currently filtered items.');
-      itemsToExport = filteredItems;
-    }
-
-    if (itemsToExport.length === 0) {
-      setMessage('No items selected or filtered to export.');
-      return;
-    }
-
-    const quizletText = itemsToExport.map(item => {
-      const notes = formatNotesForQuizlet(item.notes);
-      // Format: English Term | Urdu Script (Transliteration) // Phonetic Notes // Grammar Notes
-      return `${item.englishTranslation} | ${item.urduScriptTransliteration} // ${notes}`;
-    }).join('\n');
-
-    try {
-      navigator.clipboard.writeText(quizletText)
-        .then(() => {
-          setMessage('Content copied to clipboard for Quizlet import!');
-        })
-        .catch(err => {
-          // Fallback for document.execCommand('copy') if navigator.clipboard fails
-          const textarea = document.createElement('textarea');
-          textarea.value = quizletText;
-          textarea.style.position = 'fixed'; // Avoid scrolling to bottom
-          textarea.style.opacity = '0'; // Hide it
-          document.body.appendChild(textarea);
-          textarea.focus();
-          textarea.select();
-          try {
-            const successful = document.execCommand('copy');
-            if (successful) {
-              setMessage('Content copied to clipboard for Quizlet import (fallback)!');
-            } else {
-              setError('Failed to copy to clipboard. Please copy manually.');
-            }
-          } catch (execErr) {
-            setError('Failed to copy to clipboard. Please copy manually.');
-          }
-          document.body.removeChild(textarea);
-        });
-    } catch (err) {
-      setError('Failed to copy to clipboard. Your browser might not support this feature.');
-      console.error('Clipboard API error:', err);
-    }
-  };
-
-  // Handle select all checkbox
-  const handleSelectAll = (e) => {
-    const isChecked = e.target.checked;
-    const newSelectedItems = {};
-    filteredItems.forEach(item => {
-      newSelectedItems[item.id] = isChecked;
-    });
-    setSelectedItems(newSelectedItems);
-  };
-
-  // Flashcard Mode Logic
-  const toggleFlashcardMode = () => {
-    if (filteredItems.length === 0) {
-      setMessage('No items to practice in flashcard mode. Try generating or adding some!');
-      return;
-    }
-    setFlashcardMode(prev => !prev);
-    setCurrentCardIndex(0);
-    setIsCardFlipped(false);
-  };
-
-  const currentCard = filteredItems[currentCardIndex];
-
-  const nextCard = () => {
-    setCurrentCardIndex(prevIndex => (prevIndex + 1) % filteredItems.length);
-    setIsCardFlipped(false);
-  };
-
-  const prevCard = () => {
-    setCurrentCardIndex(prevIndex => (prevIndex - 1 + filteredItems.length) % filteredItems.length);
-    setIsCardFlipped(false);
-  };
-
-  const shuffleCards = () => {
-    const shuffled = [...filteredItems].sort(() => Math.random() - 0.5);
-    setFilteredItems(shuffled);
-    setCurrentCardIndex(0);
-    setIsCardFlipped(false);
-  };
-
-  // Handle mastery level change on flashcard
-  const handleFlashcardMasteryChange = async (level) => {
-    if (currentCard) {
-      await saveItemChanges({ ...currentCard, masteryLevel: level });
-      setMessage(`Mastery level for "${currentCard.englishTranslation}" updated to "${level}"`);
-    }
-  };
-
-  // Handle delete on flashcard
-  const handleFlashcardDelete = (item) => {
-    confirmDeleteItem(item);
-  };
-
-  if (loadingItems) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <svg className="animate-spin h-8 w-8 text-blue-600" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-        <span className="ml-3 text-lg text-gray-700">Loading {type} items...</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-gray-800 capitalize">{type} Library</h2>
-
-      {error && <p className="text-red-500 mt-4 text-center font-medium">{error}</p>}
-      {message && <p className="text-green-600 mt-4 text-center font-medium">{message}</p>}
-
-      {/* Filtering and Actions */}
-      <div className="bg-gray-50 p-5 rounded-lg shadow-inner flex flex-col md:flex-row items-center justify-between space-y-4 md:space-y-0 md:space-x-4">
-        <div className="flex flex-wrap gap-4 w-full md:w-auto">
-          {/* Filter by Batch */}
-          <div className="relative w-full md:w-auto">
-            <select
-              multiple
-              className="block appearance-none w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 pr-8 rounded-lg leading-tight focus:outline-none focus:bg-white focus:border-blue-500 h-24 overflow-y-auto"
-              value={filterBatch}
-              onChange={(e) => {
-                const options = Array.from(e.target.selectedOptions, option => option.value);
-                setFilterBatch(options);
-              }}
-            >
-              <option value="" disabled>Filter by Batch</option>
-              {availableBatches.map(batch => (
-                <option key={batch} value={batch}>{batch}</option>
-              ))}
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
-            </div>
-            {filterBatch.length > 0 && (
-              <button
-                onClick={() => setFilterBatch([])}
-                className="absolute -bottom-7 left-0 text-xs text-blue-600 hover:underline"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-
-          {/* Filter by Mastery */}
-          <div className="relative w-full md:w-auto">
-            <select
-              multiple
-              className="block appearance-none w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 pr-8 rounded-lg leading-tight focus:outline-none focus:bg-white focus:border-blue-500 h-24 overflow-y-auto"
-              value={filterMastery}
-              onChange={(e) => {
-                const options = Array.from(e.target.selectedOptions, option => option.value);
-                setFilterMastery(options);
-              }}
-            >
-              <option value="" disabled>Filter by Mastery</option>
-              {MASTERY_LEVELS.map(level => (
-                <option key={level} value={level}>{level}</option>
-              ))}
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
-            </div>
-            {filterMastery.length > 0 && (
-              <button
-                onClick={() => setFilterMastery([])}
-                className="absolute -bottom-7 left-0 text-xs text-blue-600 hover:underline"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-4 w-full md:w-auto">
-          {type === 'vocabulary' && (
-            <button
-              onClick={toggleFlashcardMode}
-              className="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-            >
-              {flashcardMode ? 'Exit Flashcard Mode' : 'Toggle Flashcard Mode'}
-            </button>
-          )}
-          <button
-            onClick={() => setShowAddItemModal(true)}
-            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-          >
-            Add Custom Item
-          </button>
-          <button
-            onClick={handleExportToQuizlet}
-            className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-          >
-            Export to Quizlet
-          </button>
-        </div>
-      </div>
-
-      {/* Flashcard Mode */}
-      {flashcardMode && type === 'vocabulary' && (
-        <div className="mt-8 p-6 bg-blue-100 rounded-lg shadow-lg">
-          <h3 className="text-xl font-semibold text-blue-800 mb-4 text-center">Flashcard Practice</h3>
-          {filteredItems.length > 0 ? (
-            <div className="flex flex-col items-center space-y-4">
-              <div
-                className={`relative bg-white p-8 rounded-xl shadow-xl w-full max-w-lg min-h-[200px] flex items-center justify-center text-center cursor-pointer transition-transform duration-500 transform ${isCardFlipped ? 'rotate-y-180' : ''}`}
-                onClick={() => setIsCardFlipped(!isCardFlipped)}
-                style={{ backfaceVisibility: 'hidden', perspective: '1000px' }}
-              >
-                <div className={`absolute inset-0 flex items-center justify-center p-4 ${isCardFlipped ? 'opacity-0' : 'opacity-100'}`}>
-                  <p className="text-3xl font-bold text-gray-800">{currentCard?.englishTranslation}</p>
-                </div>
-                <div className={`absolute inset-0 flex flex-col items-center justify-center p-4 rotate-y-180 ${isCardFlipped ? 'opacity-100' : 'opacity-0'}`}>
-                  <p className="text-2xl font-bold text-blue-700 mb-2">{currentCard?.urduScriptTransliteration}</p>
-                  <p className="text-gray-700 text-sm mb-1">
-                    <span className="font-semibold">Phonetics/Notes:</span> {currentCard?.notes}
-                  </p>
-                  <div className="mt-4 flex flex-wrap justify-center gap-2">
-                    <select
-                      value={currentCard?.masteryLevel || 'Never Seen'}
-                      onChange={(e) => handleFlashcardMasteryChange(e.target.value)}
-                      className="bg-gray-200 text-gray-800 rounded-md px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {MASTERY_LEVELS.map(level => (
-                        <option key={level} value={level}>{level}</option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleFlashcardDelete(currentCard); }}
-                      className="bg-red-400 hover:bg-red-500 text-white text-sm py-1 px-3 rounded-md transition duration-200"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="flex space-x-4 mt-4">
-                <button
-                  onClick={prevCard}
-                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300"
-                >
-                  Previous Card
-                </button>
-                <button
-                  onClick={shuffleCards}
-                  className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300"
-                >
-                  Shuffle
-                </button>
-                <button
-                  onClick={nextCard}
-                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300"
-                >
-                  Next Card
-                </button>
-              </div>
-              <p className="text-sm text-gray-600 mt-2">Card {currentCardIndex + 1} of {filteredItems.length}</p>
-            </div>
-          ) : (
-            <p className="text-center text-gray-600">No vocabulary items match your filters for flashcard practice.</p>
-          )}
-        </div>
-      )}
-
-
-      {/* Item List View */}
-      {!flashcardMode && (
-        <div className="mt-8">
-          {filteredItems.length > 0 ? (
-            <div className="overflow-x-auto rounded-lg shadow-md border border-gray-200">
-              <table className="min-w-full bg-white">
-                <thead className="bg-gray-100 border-b border-gray-200">
-                  <tr>
-                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider rounded-tl-lg">
-                      <input
-                        type="checkbox"
-                        checked={Object.keys(selectedItems).length > 0 && Object.keys(selectedItems).every(id => selectedItems[id])}
-                        onChange={handleSelectAll}
-                        className="form-checkbox h-4 w-4 text-blue-600 rounded"
-                      />
-                    </th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">English</th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Urdu (Transliteration)</th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Notes</th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Batch</th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Mastery</th>
-                    <th className="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider rounded-tr-lg">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {filteredItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50">
-                      <td className="py-3 px-4">
-                        <input
-                          type="checkbox"
-                          checked={selectedItems[item.id] || false}
-                          onChange={(e) => setSelectedItems({ ...selectedItems, [item.id]: e.target.checked })}
-                          className="form-checkbox h-4 w-4 text-blue-600 rounded"
-                        />
-                      </td>
-                      <td className="py-3 px-4">
-                        <input
-                          type="text"
-                          value={item.englishTranslation}
-                          onChange={(e) => handleItemChange(item.id, 'englishTranslation', e.target.value)}
-                          onBlur={() => saveItemChanges(item)}
-                          className="w-full p-1 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        />
-                      </td>
-                      <td className="py-3 px-4">
-                        <input
-                          type="text"
-                          value={item.urduScriptTransliteration}
-                          onChange={(e) => handleItemChange(item.id, 'urduScriptTransliteration', e.target.value)}
-                          onBlur={() => saveItemChanges(item)}
-                          className="w-full p-1 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        />
-                      </td>
-                      <td className="py-3 px-4">
-                        <textarea
-                          value={item.notes}
-                          onChange={(e) => handleItemChange(item.id, 'notes', e.target.value)}
-                          onBlur={() => saveItemChanges(item)}
-                          rows="3"
-                          className="w-full p-1 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-400 resize-y"
-                        ></textarea>
-                      </td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{item.batchName || 'N/A'}</td>
-                      <td className="py-3 px-4">
-                        <select
-                          value={item.masteryLevel}
-                          onChange={(e) => {
-                            handleItemChange(item.id, 'masteryLevel', e.target.value);
-                            saveItemChanges({ ...item, masteryLevel: e.target.value });
-                          }}
-                          className="bg-gray-100 border border-gray-300 text-gray-800 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        >
-                          {MASTERY_LEVELS.map(level => (
-                            <option key={level} value={level}>{level}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="py-3 px-4">
-                        <button
-                          onClick={() => confirmDeleteItem(item)}
-                          className="bg-red-400 hover:bg-red-500 text-white text-sm py-1 px-3 rounded-md shadow-sm transition duration-200"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-center text-gray-600 py-10">No {type} items found. Try generating or adding some!</p>
-          )}
-        </div>
-      )}
-
-      {/* Add Custom Item Modal */}
-      {showAddItemModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Add New {type.slice(0, -1).replace('e', '')} Item</h2> {/* Adjust for 'dialogue' */}
-            <form onSubmit={handleAddItem} className="space-y-4">
-              <div>
-                <label className="block text-gray-700 text-sm font-bold mb-2">English Translation:</label>
-                <input
-                  type="text"
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={newItem.englishTranslation}
-                  onChange={(e) => setNewItem({ ...newItem, englishTranslation: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-gray-700 text-sm font-bold mb-2">Urdu Script (Transliteration):</label>
-                <input
-                  type="text"
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={newItem.urduScriptTransliteration}
-                  onChange={(e) => setNewItem({ ...newItem, urduScriptTransliteration: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-gray-700 text-sm font-bold mb-2">Notes (Phonetic, Grammar, Contextual):</label>
-                <textarea
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[100px] resize-y"
-                  value={newItem.notes}
-                  onChange={(e) => setNewItem({ ...newItem, notes: e.target.value })}
-                  rows="5"
-                ></textarea>
-              </div>
-              <div>
-                <label className="block text-gray-700 text-sm font-bold mb-2">Batch Name (Optional):</label>
-                <input
-                  type="text"
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={newItem.batchName || ''}
-                  onChange={(e) => setNewItem({ ...newItem, batchName: e.target.value })}
-                  placeholder="e.g., Custom Additions"
-                />
-              </div>
-              {error && <p className="text-red-500 text-sm italic">{error}</p>}
-              <div className="flex justify-end space-x-4 mt-6">
-                <button
-                  type="button"
-                  onClick={() => { setShowAddItemModal(false); setError(''); setNewItem({ urduScriptTransliteration: '', englishTranslation: '', notes: '', masteryLevel: 'Never Seen' }); }}
-                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105"
-                >
-                  Add Item
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Confirm Delete Modal */}
-      {showConfirmDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Confirm Deletion</h2>
-            <p className="text-gray-700 mb-4">
-              Are you sure you want to delete the item: "<span className="font-semibold">{itemToDelete?.englishTranslation}</span>"? This action cannot be undone.
-            </p>
-            <div className="flex justify-end space-x-4 mt-6">
-              <button
-                onClick={() => { setShowConfirmDeleteModal(false); setItemToDelete(null); setError(''); }}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteItem}
-                className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Tailwind CSS setup (included directly for Canvas environment)
-// This script will load Tailwind CSS classes
-const TailwindCSS = () => (
-  <script src="https://cdn.tailwindcss.com"></script>
-);
-
-// Add Inter font (Google Fonts)
-const InterFont = () => (
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-);
-
-// Wrap App with necessary providers and global styles
-const Root = () => (
-  <>
-    <TailwindCSS />
-    <InterFont />
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hyderabadi Urdu Learning Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chosen Palette: "Warm Neutral Harmony" -->
+    <!-- Application Structure Plan: A task-oriented, single-page application design with a fixed sidebar for primary navigation and a main content area that dynamically displays different views. The structure is designed to follow the user's core workflow: 1) Dashboard (Home) for a quick overview of progress. 2) Generate Content for AI-powered creation. 3) My Library (with tabs for Vocabulary, Dialogues, Grammar) for curation, editing, and practice. 4) A dedicated Flashcard mode. This non-linear, task-based architecture was chosen over a report-like structure to give the user immediate access to the tools they need most, enhancing usability and efficiency for a busy learner. -->
+    <!-- Visualization & Content Choices: 
+        - Report Info: Learning Progress (Mastery Levels). Goal: Inform. Viz: Donut Chart (Chart.js). Interaction: Hover for details. Justification: Provides an immediate, easy-to-digest visual summary of the user's overall progress.
+        - Report Info: Content totals (Vocab, Dialogues, etc.). Goal: Compare. Viz: Bar Chart (Chart.js). Interaction: Hover for exact counts. Justification: Quickly communicates the volume of content in each learning module.
+        - Report Info: Vocabulary, Dialogues, Grammar Libraries. Goal: Organize & Inform. Viz: Interactive HTML Tables. Interaction: Filtering by batch/mastery, inline editing, mastery updates, selection for export. Justification: This is the core "workbench" feature. A table provides a dense, scannable view, and the interactions support the primary curation workflow.
+        - Report Info: Vocabulary Practice. Goal: Practice/Recall. Viz: HTML/CSS Flashcard Modal. Interaction: Click to flip, next/prev navigation, shuffle. Justification: Provides a simple, effective in-app practice session without the need to immediately export to Quizlet.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
     <style>
-      {`
-        body {
-          font-family: 'Inter', sans-serif;
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
+        body { font-family: 'Inter', sans-serif; }
+        .sidebar-icon { font-size: 1.25rem; }
+        .active-nav { background-color: #E5E7EB; color: #1F2937; }
+        .urdu-text { font-family: 'Noto Nastaliq Urdu', serif; font-size: 1.2rem; }
+        .modal { display: none; }
+        .flashcard-container { perspective: 1000px; }
+        .flashcard { transform-style: preserve-3d; transition: transform 0.6s; }
+        .flashcard.is-flipped { transform: rotateY(180deg); }
+        .flashcard-face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+        .flashcard-back { transform: rotateY(180deg); }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px; /* Max width for charts */
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px; /* Base height */
+            max-height: 400px;
         }
-        .rotate-y-180 {
-          transform: rotateY(180deg);
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
         }
-        /* Custom scrollbar for multi-select */
-        select[multiple] {
-          -webkit-overflow-scrolling: touch; /* Enable smooth scrolling on iOS */
-        }
-        select[multiple]::-webkit-scrollbar {
-          width: 8px;
-        }
-        select[multiple]::-webkit-scrollbar-track {
-          background: #f1f1f1;
-          border-radius: 4px;
-        }
-        select[multiple]::-webkit-scrollbar-thumb {
-          background: #888;
-          border-radius: 4px;
-        }
-        select[multiple]::-webkit-scrollbar-thumb:hover {
-          background: #555;
-        }
-      `}
     </style>
-    <App />
-  </>
-);
+</head>
+<body class="bg-gray-50 text-gray-800">
 
-export default Root;
+    <div class="flex h-screen">
+        <!-- Sidebar Navigation -->
+        <aside class="w-20 md:w-64 bg-white border-r flex flex-col">
+            <div class="h-16 flex items-center justify-center border-b">
+                <i class="fas fa-book-open-reader text-2xl text-teal-600"></i>
+                <span class="hidden md:inline ml-3 text-lg font-bold">Urdu Assistant</span>
+            </div>
+            <nav class="flex-1 px-2 md:px-4 py-4 space-y-2">
+                <a href="#dashboard" class="flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100 nav-link active-nav">
+                    <i class="fas fa-chart-pie sidebar-icon"></i>
+                    <span class="hidden md:inline ml-4 font-medium">Dashboard</span>
+                </a>
+                <a href="#generate" class="flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100 nav-link">
+                    <i class="fas fa-magic-sparkles sidebar-icon"></i>
+                    <span class="hidden md:inline ml-4 font-medium">Generate Content</span>
+                </a>
+                <a href="#library" class="flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100 nav-link">
+                    <i class="fas fa-layer-group sidebar-icon"></i>
+                    <span class="hidden md:inline ml-4 font-medium">My Library</span>
+                </a>
+            </nav>
+            <div class="px-2 md:px-4 py-4 border-t">
+                 <div id="auth-container" class="space-y-2">
+                     <!-- Auth content will be injected here -->
+                 </div>
+            </div>
+        </aside>
 
+        <!-- Main Content -->
+        <main class="flex-1 p-4 md:p-8 overflow-y-auto">
+            
+            <!-- Dashboard View -->
+            <div id="dashboard" class="page-content">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">Dashboard</h1>
+                <p class="text-gray-600 mb-8">Welcome back! Here's a snapshot of your learning journey.</p>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm">
+                        <h3 class="text-lg font-semibold mb-4">Total Items in Library</h3>
+                        <div class="chart-container h-64 md:h-80"><canvas id="progressChart"></canvas></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow-sm">
+                         <h3 class="text-lg font-semibold mb-4">Mastery Levels</h3>
+                         <div class="chart-container h-64 md:h-80"><canvas id="masteryChart"></canvas></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generate Content View -->
+            <div id="generate" class="page-content hidden">
+                 <h1 class="text-3xl font-bold text-gray-800 mb-2">Generate New Content</h1>
+                 <p class="text-gray-600 mb-8">Use the power of AI to create custom learning materials. Describe what you need below.</p>
+                 <div class="bg-white p-6 rounded-xl shadow-sm">
+                    <textarea id="prompt-input" rows="5" class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" placeholder="e.g., 'Give me 10 words about kitchen items with phonetic notes' or 'Provide 5 sentences for talking to a child about bedtime.'"></textarea>
+                    <div class="flex flex-wrap items-center justify-between mt-4 gap-4">
+                        <button id="generate-btn" class="bg-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-teal-700 transition-colors">
+                            <i class="fas fa-magic-sparkles mr-2"></i>Generate
+                        </button>
+                         <button id="lucky-btn" class="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
+                            <i class="fas fa-dice mr-2"></i>I'm Feeling Lucky
+                        </button>
+                    </div>
+                    <div id="generation-output" class="mt-6 p-4 border-l-4 border-teal-500 bg-teal-50 hidden"></div>
+                    <div id="generation-loading" class="mt-6 hidden flex items-center justify-center">
+                        <i class="fas fa-spinner fa-spin text-teal-600 text-3xl"></i>
+                        <span class="ml-3 text-gray-600">Generating content...</span>
+                    </div>
+                    <div id="generation-actions" class="mt-4 flex flex-wrap gap-2 hidden">
+                        <button id="load-vocab-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">Load to Vocabulary</button>
+                        <button id="load-dialogues-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">Load to Dialogues</button>
+                        <button id="load-grammar-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">Load to Grammar</button>
+                    </div>
+                 </div>
+            </div>
+
+            <!-- Library View -->
+            <div id="library" class="page-content hidden">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">My Library</h1>
+                <p class="text-gray-600 mb-6">Curate, practice, and export your personalized learning sets.</p>
+                
+                <!-- Library Tabs -->
+                <div class="border-b border-gray-200">
+                    <nav class="-mb-px flex space-x-6" aria-label="Tabs">
+                        <button class="library-tab whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm border-teal-500 text-teal-600" data-tab="vocabulary">Vocabulary</button>
+                        <button class="library-tab whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300" data-tab="dialogues">Dialogues</button>
+                        <button class="library-tab whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300" data-tab="grammar">Grammar Examples</button>
+                    </nav>
+                </div>
+                
+                <div id="library-content-area" class="mt-6">
+                    <!-- Tab Content will be injected here -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="auth-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md relative">
+            <h2 class="text-2xl font-bold mb-6 text-center">Sign In / Sign Up</h2>
+            <input type="email" id="email-input" placeholder="Email" class="w-full p-3 mb-4 border rounded-lg">
+            <input type="password" id="password-input" placeholder="Password" class="w-full p-3 mb-4 border rounded-lg">
+            <div class="flex gap-4">
+                <button id="signin-btn" class="flex-1 bg-teal-600 text-white py-2 rounded-lg font-semibold hover:bg-teal-700">Sign In</button>
+                <button id="signup-btn" class="flex-1 bg-gray-600 text-white py-2 rounded-lg font-semibold hover:bg-gray-700">Sign Up</button>
+            </div>
+            <button id="close-auth-modal" class="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+        </div>
+    </div>
+    
+    <div id="flashcard-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
+        <div class="w-full max-w-2xl relative">
+            <div class="flashcard-container h-80">
+                <div id="flashcard-inner" class="flashcard relative w-full h-full">
+                    <div id="flashcard-front" class="flashcard-face absolute w-full h-full bg-white rounded-xl shadow-2xl flex flex-col items-center justify-center p-6 text-center"></div>
+                    <div id="flashcard-back" class="flashcard-face flashcard-back absolute w-full h-full bg-white rounded-xl shadow-2xl flex flex-col items-center justify-center p-6 text-center"></div>
+                </div>
+            </div>
+            <div class="flex items-center justify-center mt-6 gap-4">
+                 <button id="flashcard-prev" class="bg-white p-3 rounded-full shadow-lg hover:bg-gray-200"><i class="fas fa-arrow-left"></i></button>
+                 <button id="flashcard-shuffle" class="bg-white text-teal-600 px-6 py-3 rounded-full shadow-lg font-semibold hover:bg-gray-200"><i class="fas fa-random mr-2"></i>Shuffle</button>
+                 <button id="flashcard-next" class="bg-white p-3 rounded-full shadow-lg hover:bg-gray-200"><i class="fas fa-arrow-right"></i></button>
+            </div>
+            <button id="close-flashcard-modal" class="absolute top-4 right-4 text-white hover:text-gray-300 text-3xl">&times;</button>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmation-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm text-center relative">
+            <h2 id="confirmation-title" class="text-xl font-bold mb-4"></h2>
+            <p id="confirmation-message" class="text-gray-700 mb-6"></p>
+            <div class="flex justify-center gap-4">
+                <button id="confirm-yes" class="bg-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-teal-700">Yes</button>
+                <button id="confirm-no" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg font-semibold hover:bg-gray-400">No</button>
+            </div>
+            <button id="close-confirmation-modal" class="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+        </div>
+    </div>
+
+    <!-- Message Modal -->
+    <div id="message-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm text-center relative">
+            <h2 id="message-title" class="text-xl font-bold mb-4"></h2>
+            <p id="message-content" class="text-gray-700 mb-6"></p>
+            <button id="close-message-modal" class="bg-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-teal-700">OK</button>
+            <button id="close-message-modal-x" class="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+        </div>
+    </div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    let app;
+    let db;
+    let auth;
+    let currentUserId = null;
+    let isAuthReady = false;
+
+    // --- GLOBAL DATA STORES ---
+    let vocabularyData = [];
+    let dialoguesData = [];
+    let grammarData = [];
+    let generatedContentCache = []; // To store content generated by AI before saving to Firestore
+
+    // --- CHART CONFIG ---
+    let progressChartInstance, masteryChartInstance;
+    const chartColors = {
+        'Never Seen': '#9CA3AF',
+        'Recognized': '#A78BFA',
+        'Familiar': '#60A5FA',
+        'Can Recall': '#34D399',
+        'Mastered': '#14B8A6',
+        'Teaching Ready': '#F59E0B'
+    };
+    const masteryLevels = Object.keys(chartColors);
+
+    function createProgressChart() {
+        const ctx = document.getElementById('progressChart').getContext('2d');
+        if (progressChartInstance) progressChartInstance.destroy();
+        progressChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Vocabulary', 'Dialogues', 'Grammar'],
+                datasets: [{
+                    label: 'Total Items',
+                    data: [vocabularyData.length, dialoguesData.length, grammarData.length],
+                    backgroundColor: ['#14B8A6', '#F59E0B', '#EF4444'],
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+    }
+
+    function createMasteryChart() {
+        const ctx = document.getElementById('masteryChart').getContext('2d');
+        const masteryCounts = vocabularyData.reduce((acc, item) => {
+            acc[item.masteryLevel] = (acc[item.masteryLevel] || 0) + 1;
+            return acc;
+        }, {});
+
+        const labels = Object.keys(masteryCounts);
+        const data = Object.values(masteryCounts);
+        const backgroundColors = labels.map(label => chartColors[label] || '#CBD5E1');
+
+        if (masteryChartInstance) masteryChartInstance.destroy();
+        masteryChartInstance = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: backgroundColors,
+                    borderColor: '#fff',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { padding: 15 }
+                    }
+                }
+            }
+        });
+    }
+
+    // --- NAVIGATION & PAGE DISPLAY ---
+    const navLinks = document.querySelectorAll('.nav-link');
+    const pages = document.querySelectorAll('.page-content');
+
+    function showPage(pageId) {
+        pages.forEach(page => page.classList.add('hidden'));
+        document.getElementById(pageId).classList.remove('hidden');
+
+        navLinks.forEach(link => {
+            if (link.getAttribute('href') === `#${pageId}`) {
+                link.classList.add('active-nav');
+            } else {
+                link.classList.remove('active-nav');
+            }
+        });
+        
+        if (pageId === 'dashboard' && isAuthReady) {
+            createProgressChart();
+            createMasteryChart();
+        }
+        if(pageId === 'library' && isAuthReady) {
+            handleTabClick(document.querySelector('.library-tab'));
+        }
+    }
+
+    navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const pageId = e.currentTarget.getAttribute('href').substring(1);
+            showPage(pageId);
+        });
+    });
+
+    // --- LIBRARY TABS & CONTENT RENDERING ---
+    const libraryTabs = document.querySelectorAll('.library-tab');
+    const libraryContentArea = document.getElementById('library-content-area');
+
+    function handleTabClick(targetTab) {
+        libraryTabs.forEach(t => {
+            t.classList.remove('border-teal-500', 'text-teal-600');
+            t.classList.add('border-transparent', 'text-gray-500');
+        });
+        targetTab.classList.add('border-teal-500', 'text-teal-600');
+        targetTab.classList.remove('border-transparent', 'text-gray-500');
+
+        renderLibraryContent(targetTab.dataset.tab);
+    }
+    
+    libraryTabs.forEach(tab => tab.addEventListener('click', e => handleTabClick(e.target)));
+
+    async function renderLibraryContent(tab) {
+        let data, tableHeaders;
+        let collectionName;
+
+        if (tab === 'vocabulary') {
+            data = vocabularyData;
+            tableHeaders = ['English', 'Urdu', 'Phonetics', 'Notes', 'Batch', 'Mastery', 'Actions'];
+            collectionName = 'vocabulary';
+        } else if (tab === 'dialogues') {
+            data = dialoguesData;
+            tableHeaders = ['English', 'Urdu', 'Phonetics', 'Grammar', 'Notes', 'Batch', 'Mastery', 'Actions'];
+            collectionName = 'dialogues';
+        } else if (tab === 'grammar') {
+            data = grammarData;
+            tableHeaders = ['English', 'Urdu', 'Phonetics', 'Grammar', 'Notes', 'Batch', 'Mastery', 'Actions'];
+            collectionName = 'grammarExamples';
+        } else {
+            data = [];
+            tableHeaders = [];
+        }
+
+        libraryContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+                <div class="flex flex-wrap gap-4 mb-4">
+                    <!-- Filter controls here (to be implemented later) -->
+                </div>
+                <div class="flex flex-wrap gap-4 mb-4 items-center">
+                    <button id="export-quizlet-btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 text-sm"><i class="fas fa-file-export mr-2"></i>Export to Quizlet</button>
+                    ${tab === 'vocabulary' ? `<button id="start-flashcards" class="bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-700 text-sm"><i class="far fa-clone mr-2"></i>Practice with Flashcards</button>` : ''}
+                    <button id="add-custom-item-btn" class="bg-gray-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-700 text-sm"><i class="fas fa-plus mr-2"></i>Add Custom Item</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left text-gray-500">
+                        <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                            <tr>
+                                <th scope="col" class="px-6 py-3"><input type="checkbox" id="select-all-items"></th>
+                                ${tableHeaders.map(h => `<th scope="col" class="px-6 py-3">${h}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.map(item => `
+                                <tr class="bg-white border-b hover:bg-gray-50" data-id="${item.id}" data-collection="${collectionName}">
+                                    <td class="px-6 py-4"><input type="checkbox" class="item-select-checkbox"></td>
+                                    <td class="px-6 py-4" contenteditable="true" data-field="englishTranslation">${item.englishTranslation}</td>
+                                    <td class="px-6 py-4 urdu-text" contenteditable="true" data-field="urduScriptTransliteration">${item.urduScriptTransliteration}</td>
+                                    <td class="px-6 py-4" contenteditable="true" data-field="phoneticHints">${item.phoneticHints}</td>
+                                    ${tab !== 'vocabulary' ? `<td class="px-6 py-4" contenteditable="true" data-field="grammarNotes">${item.grammarNotes || ''}</td>` : ''}
+                                    <td class="px-6 py-4" contenteditable="true" data-field="contextualUsageNotes">${item.contextualUsageNotes || ''}</td>
+                                    <td class="px-6 py-4" contenteditable="true" data-field="batchName">${item.batchName}</td>
+                                    <td class="px-6 py-4">
+                                        <select class="mastery-select border rounded-lg p-1" data-id="${item.id}" data-collection="${collectionName}">
+                                            ${masteryLevels.map(level => `<option value="${level}" ${item.masteryLevel === level ? 'selected' : ''}>${level}</option>`).join('')}
+                                        </select>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <button class="delete-item-btn text-red-500 hover:text-red-700" data-id="${item.id}" data-collection="${collectionName}"><i class="fas fa-trash-alt"></i></button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                            ${data.length === 0 ? `<tr><td colspan="${tableHeaders.length + 1}" class="text-center py-8">No items in this library yet.</td></tr>` : ''}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('select-all-items').addEventListener('change', (e) => {
+            document.querySelectorAll('.item-select-checkbox').forEach(checkbox => {
+                checkbox.checked = e.target.checked;
+            });
+        });
+
+        document.querySelectorAll('.mastery-select').forEach(select => {
+            select.addEventListener('change', async (e) => {
+                const itemId = e.target.dataset.id;
+                const itemCollection = e.target.dataset.collection;
+                const newMasteryLevel = e.target.value;
+                await updateItemMastery(itemCollection, itemId, newMasteryLevel);
+            });
+        });
+
+        document.querySelectorAll('[contenteditable="true"]').forEach(cell => {
+            cell.addEventListener('blur', async (e) => {
+                const row = e.target.closest('tr');
+                const itemId = row.dataset.id;
+                const itemCollection = row.dataset.collection;
+                const field = e.target.dataset.field;
+                const newValue = e.target.innerText;
+                await updateItemField(itemCollection, itemId, field, newValue);
+            });
+        });
+
+        document.querySelectorAll('.delete-item-btn').forEach(button => {
+            button.addEventListener('click', async (e) => {
+                const itemId = e.currentTarget.dataset.id;
+                const itemCollection = e.currentTarget.dataset.collection;
+                showConfirmationModal('Delete Item', 'Are you sure you want to delete this item?', async () => {
+                    await deleteItem(itemCollection, itemId);
+                });
+            });
+        });
+
+        const startFlashcardsBtn = document.getElementById('start-flashcards');
+        if(startFlashcardsBtn) {
+            startFlashcardsBtn.addEventListener('click', () => showFlashcardModal());
+        }
+
+        document.getElementById('export-quizlet-btn').addEventListener('click', () => exportToQuizlet(tab));
+        document.getElementById('add-custom-item-btn').addEventListener('click', () => showMessageModal('Add Custom Item', 'This feature is coming soon!', 'OK')); // Placeholder
+    }
+
+    // --- FLASHCARD MODAL ---
+    const flashcardModal = document.getElementById('flashcard-modal');
+    const flashcardInner = document.getElementById('flashcard-inner');
+    const flashcardFront = document.getElementById('flashcard-front');
+    const flashcardBack = document.getElementById('flashcard-back');
+    
+    let currentFlashcardIndex = 0;
+    let shuffledIndices = [];
+
+    function showFlashcardModal() {
+        if(vocabularyData.length === 0) {
+            showMessageModal('No Vocabulary', 'Please add some vocabulary items to practice flashcards.', 'OK');
+            return;
+        }
+        shuffledIndices = vocabularyData.map((_, i) => i);
+        currentFlashcardIndex = 0;
+        updateFlashcard();
+        flashcardModal.style.display = 'flex';
+    }
+    
+    function updateFlashcard(isShuffle = false) {
+        if(isShuffle) {
+             for (let i = shuffledIndices.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffledIndices[i], shuffledIndices[j]] = [shuffledIndices[j], shuffledIndices[i]];
+            }
+            currentFlashcardIndex = 0;
+        }
+
+        const item = vocabularyData[shuffledIndices[currentFlashcardIndex]];
+        flashcardFront.innerHTML = `<h2 class="text-4xl font-bold">${item.englishTranslation}</h2>`;
+        flashcardBack.innerHTML = `
+            <div>
+                <h3 class="text-3xl font-bold mb-4 urdu-text">${item.urduScriptTransliteration}</h3>
+                <p class="text-gray-600"><strong>Phonetics:</strong> ${item.phoneticHints}</p>
+                <p class="text-gray-600 mt-2"><strong>Notes:</strong> ${item.contextualUsageNotes}</p>
+            </div>`;
+        flashcardInner.classList.remove('is-flipped');
+    }
+    
+    document.getElementById('flashcard-next').addEventListener('click', () => {
+        currentFlashcardIndex = (currentFlashcardIndex + 1) % vocabularyData.length;
+        updateFlashcard();
+    });
+    
+    document.getElementById('flashcard-prev').addEventListener('click', () => {
+        currentFlashcardIndex = (currentFlashcardIndex - 1 + vocabularyData.length) % vocabularyData.length;
+        updateFlashcard();
+    });
+    
+    document.getElementById('flashcard-shuffle').addEventListener('click', () => {
+        updateFlashcard(true);
+    });
+
+    flashcardInner.addEventListener('click', () => flashcardInner.classList.toggle('is-flipped'));
+    document.getElementById('close-flashcard-modal').addEventListener('click', () => flashcardModal.style.display = 'none');
+
+    // --- AUTHENTICATION ---
+    const authContainer = document.getElementById('auth-container');
+    const authModal = document.getElementById('auth-modal');
+
+    function renderAuthUI() {
+        if (currentUserId) {
+            authContainer.innerHTML = `
+                <div class="flex items-center">
+                    <i class="fas fa-user-circle text-2xl text-gray-500"></i>
+                    <span class="hidden md:inline ml-3 text-sm font-medium">${auth.currentUser?.email || 'Anonymous'}</span>
+                </div>
+                <div class="flex items-center mt-2">
+                    <i class="fas fa-id-badge text-2xl text-gray-500"></i>
+                    <span class="hidden md:inline ml-3 text-xs font-medium break-all">${currentUserId}</span>
+                </div>
+                <button id="signout-btn" class="w-full mt-2 text-left flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100">
+                    <i class="fas fa-sign-out-alt sidebar-icon"></i>
+                    <span class="hidden md:inline ml-4 font-medium">Sign Out</span>
+                </button>
+            `;
+            document.getElementById('signout-btn').addEventListener('click', async () => {
+                try {
+                    await signOut(auth);
+                    showMessageModal('Signed Out', 'You have been signed out. You are now signed in anonymously.', 'OK');
+                } catch (error) {
+                    showMessageModal('Sign Out Error', `Error signing out: ${error.message}`, 'OK');
+                }
+            });
+        } else {
+            authContainer.innerHTML = `
+                <button id="open-auth-modal-btn" class="w-full text-left flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100">
+                     <i class="fas fa-sign-in-alt sidebar-icon"></i>
+                     <span class="hidden md:inline ml-4 font-medium">Sign In / Sign Up</span>
+                </button>
+            `;
+            document.getElementById('open-auth-modal-btn').addEventListener('click', () => {
+                authModal.style.display = 'flex';
+            });
+        }
+    }
+    
+    document.getElementById('close-auth-modal').addEventListener('click', () => authModal.style.display = 'none');
+    document.getElementById('signin-btn').addEventListener('click', async () => {
+        const email = document.getElementById('email-input').value;
+        const password = document.getElementById('password-input').value;
+        if (!email || !password) {
+            showMessageModal('Input Error', 'Please enter both email and password.', 'OK');
+            return;
+        }
+        try {
+            await signInWithEmailAndPassword(auth, email, password);
+            authModal.style.display = 'none';
+            showMessageModal('Signed In', 'You have successfully signed in!', 'OK');
+        } catch (error) {
+            showMessageModal('Sign In Error', `Error signing in: ${error.message}`, 'OK');
+        }
+    });
+
+    document.getElementById('signup-btn').addEventListener('click', async () => {
+        const email = document.getElementById('email-input').value;
+        const password = document.getElementById('password-input').value;
+        if (!email || !password) {
+            showMessageModal('Input Error', 'Please enter both email and password.', 'OK');
+            return;
+        }
+        try {
+            await createUserWithEmailAndPassword(auth, email, password);
+            authModal.style.display = 'none';
+            showMessageModal('Signed Up', 'Account created successfully! You are now signed in.', 'OK');
+        } catch (error) {
+            showMessageModal('Sign Up Error', `Error creating account: ${error.message}`, 'OK');
+        }
+    });
+
+    // --- FIREBASE INITIALIZATION & DATA FETCHING ---
+    async function initializeFirebase() {
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        auth = getAuth(app);
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUserId = user.uid;
+            } else {
+                // If no user is logged in, sign in anonymously
+                try {
+                    await signInAnonymously(auth);
+                } catch (error) {
+                    console.error("Error signing in anonymously:", error);
+                    showMessageModal('Authentication Error', `Failed to sign in anonymously: ${error.message}`, 'OK');
+                }
+            }
+            isAuthReady = true;
+            renderAuthUI();
+            if (currentUserId) {
+                setupFirestoreListeners();
+            }
+            // Ensure the current page is rendered after auth is ready
+            const currentPageId = document.querySelector('.nav-link.active-nav').getAttribute('href').substring(1);
+            showPage(currentPageId);
+        });
+
+        // Use __initial_auth_token if available
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            try {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } catch (error) {
+                console.error("Error signing in with custom token:", error);
+                showMessageModal('Authentication Error', `Failed to sign in with custom token: ${error.message}`, 'OK');
+                // Fallback to anonymous if custom token fails
+                await signInAnonymously(auth);
+            }
+        } else {
+            // If no initial token, proceed with anonymous sign-in via onAuthStateChanged
+        }
+    }
+
+    function setupFirestoreListeners() {
+        if (!db || !currentUserId) return;
+
+        const getCollectionPath = (collectionName) => `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`;
+
+        onSnapshot(collection(db, getCollectionPath('vocabulary')), (snapshot) => {
+            vocabularyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (document.querySelector('.library-tab[data-tab="vocabulary"]').classList.contains('border-teal-500')) {
+                renderLibraryContent('vocabulary');
+            }
+            if (document.getElementById('dashboard').classList.contains('hidden') === false) {
+                 createProgressChart();
+                 createMasteryChart();
+            }
+        });
+
+        onSnapshot(collection(db, getCollectionPath('dialogues')), (snapshot) => {
+            dialoguesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (document.querySelector('.library-tab[data-tab="dialogues"]').classList.contains('border-teal-500')) {
+                renderLibraryContent('dialogues');
+            }
+            if (document.getElementById('dashboard').classList.contains('hidden') === false) {
+                 createProgressChart();
+            }
+        });
+
+        onSnapshot(collection(db, getCollectionPath('grammarExamples')), (snapshot) => {
+            grammarData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            if (document.querySelector('.library-tab[data-tab="grammar"]').classList.contains('border-teal-500')) {
+                renderLibraryContent('grammar');
+            }
+            if (document.getElementById('dashboard').classList.contains('hidden') === false) {
+                 createProgressChart();
+            }
+        });
+    }
+
+    async function updateItemMastery(collectionName, itemId, newMasteryLevel) {
+        try {
+            const itemRef = doc(db, `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`, itemId);
+            await updateDoc(itemRef, { masteryLevel: newMasteryLevel, lastReviewed: new Date() });
+            showMessageModal('Success', 'Mastery level updated!', 'OK');
+        } catch (error) {
+            showMessageModal('Error', `Failed to update mastery level: ${error.message}`, 'OK');
+        }
+    }
+
+    async function updateItemField(collectionName, itemId, field, newValue) {
+        try {
+            const itemRef = doc(db, `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`, itemId);
+            await updateDoc(itemRef, { [field]: newValue });
+            showMessageModal('Success', 'Item updated!', 'OK');
+        } catch (error) {
+            showMessageModal('Error', `Failed to update item: ${error.message}`, 'OK');
+        }
+    }
+
+    async function deleteItem(collectionName, itemId) {
+        try {
+            const itemRef = doc(db, `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`, itemId);
+            await deleteDoc(itemRef);
+            showMessageModal('Success', 'Item deleted!', 'OK');
+        } catch (error) {
+            showMessageModal('Error', `Failed to delete item: ${error.message}`, 'OK');
+        }
+    }
+
+    async function addGeneratedContentToFirestore(contentArray, collectionName, batchName) {
+        if (!currentUserId) {
+            showMessageModal('Error', 'User not authenticated. Please sign in.', 'OK');
+            return;
+        }
+
+        const collectionRef = collection(db, `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`);
+        let addedCount = 0;
+        let skippedCount = 0;
+
+        for (const item of contentArray) {
+            const querySnapshot = await getDocs(query(
+                collectionRef,
+                where('englishTranslation', '==', item.englishTranslation),
+                where('urduScriptTransliteration', '==', item.urduScriptTransliteration)
+            ));
+
+            if (querySnapshot.empty) {
+                const newItem = {
+                    ...item,
+                    batchName: batchName,
+                    masteryLevel: 'Never Seen',
+                    createdAt: new Date(),
+                    lastReviewed: new Date(),
+                    difficultyScore: 1, // Default
+                    isAuthentic: false, // Default
+                    needsAudio: true // Default
+                };
+                await addDoc(collectionRef, newItem);
+                addedCount++;
+            } else {
+                skippedCount++;
+            }
+        }
+        showMessageModal('Content Loaded', `Added ${addedCount} new items. Skipped ${skippedCount} duplicates.`, 'OK');
+        document.getElementById('generation-output').classList.add('hidden');
+        document.getElementById('generation-actions').classList.add('hidden');
+    }
+
+    // --- AI CONTENT GENERATION ---
+    const generateBtn = document.getElementById('generate-btn');
+    const luckyBtn = document.getElementById('lucky-btn');
+    const promptInput = document.getElementById('prompt-input');
+    const generationOutput = document.getElementById('generation-output');
+    const generationLoading = document.getElementById('generation-loading');
+    const generationActions = document.getElementById('generation-actions');
+    const loadVocabBtn = document.getElementById('load-vocab-btn');
+    const loadDialoguesBtn = document.getElementById('load-dialogues-btn');
+    const loadGrammarBtn = document.getElementById('load-grammar-btn');
+
+    async function callGeminiAPI(prompt, schema = null) {
+        generationLoading.classList.remove('hidden');
+        generationOutput.classList.add('hidden');
+        generationActions.classList.add('hidden');
+
+        try {
+            let chatHistory = [];
+            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+            
+            const payload = { contents: chatHistory };
+            if (schema) {
+                payload.generationConfig = {
+                    responseMimeType: "application/json",
+                    responseSchema: schema
+                };
+            }
+
+            const apiKey = ""; // Canvas will provide this at runtime
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                return schema ? JSON.parse(text) : text;
+            } else {
+                showMessageModal('Generation Error', 'Could not get a valid response from AI. Please try again.', 'OK');
+                return null;
+            }
+        } catch (error) {
+            showMessageModal('API Error', `Error calling Gemini API: ${error.message}`, 'OK');
+            return null;
+        } finally {
+            generationLoading.classList.add('hidden');
+        }
+    }
+
+    generateBtn.addEventListener('click', async () => {
+        const prompt = promptInput.value;
+        if (!prompt) {
+            showMessageModal('Input Required', 'Please enter a prompt to generate content.', 'OK');
+            return;
+        }
+
+        const basePrompt = `You are an expert in conversational Hyderabadi Urdu for home and family use. Prioritize less formal vocabulary where appropriate, but generate examples with formal sentence structures. Provide precise phonetic hints and concise grammar explanations for non-script learners. Avoid redundant phonetic descriptions. Based on the following request, generate content in JSON format.`;
+
+        let schema;
+        let inferredType = 'vocabulary'; // Default inference
+
+        if (prompt.toLowerCase().includes('vocabulary') || prompt.toLowerCase().includes('words')) {
+            schema = {
+                type: "ARRAY",
+                items: {
+                    type: "OBJECT",
+                    properties: {
+                        "englishTranslation": { "type": "STRING" },
+                        "urduScriptTransliteration": { "type": "STRING" },
+                        "phoneticHints": { "type": "STRING" },
+                        "contextualUsageNotes": { "type": "STRING" }
+                    },
+                    required: ["englishTranslation", "urduScriptTransliteration", "phoneticHints"]
+                }
+            };
+            inferredType = 'vocabulary';
+        } else if (prompt.toLowerCase().includes('sentence') || prompt.toLowerCase().includes('dialogue') || prompt.toLowerCase().includes('phrases')) {
+            schema = {
+                type: "ARRAY",
+                items: {
+                    type: "OBJECT",
+                    properties: {
+                        "englishTranslation": { "type": "STRING" },
+                        "urduScriptTransliteration": { "type": "STRING" },
+                        "phoneticHints": { "type": "STRING" },
+                        "grammarNotes": { "type": "STRING" },
+                        "contextualUsageNotes": { "type": "STRING" }
+                    },
+                    required: ["englishTranslation", "urduScriptTransliteration", "phoneticHints"]
+                }
+            };
+            inferredType = 'dialogues'; // Could also be grammar, user will choose
+        } else if (prompt.toLowerCase().includes('grammar') || prompt.toLowerCase().includes('rule') || prompt.toLowerCase().includes('conjugation')) {
+            schema = {
+                type: "ARRAY",
+                items: {
+                    type: "OBJECT",
+                    properties: {
+                        "englishTranslation": { "type": "STRING" },
+                        "urduScriptTransliteration": { "type": "STRING" },
+                        "phoneticHints": { "type": "STRING" },
+                        "grammarNotes": { "type": "STRING" },
+                        "contextualUsageNotes": { "type": "STRING" }
+                    },
+                    required: ["englishTranslation", "urduScriptTransliteration", "phoneticHints", "grammarNotes"]
+                }
+            };
+            inferredType = 'grammarExamples';
+        } else {
+             // Fallback schema if type is unclear, let AI provide general text initially
+             schema = null; // AI will return plain text
+        }
+
+        const fullPrompt = `${basePrompt}\n\nUser Request: ${prompt}`;
+        const generatedContent = await callGeminiAPI(fullPrompt, schema);
+
+        if (generatedContent) {
+            generatedContentCache = generatedContent; // Store the raw generated content
+            generationOutput.classList.remove('hidden');
+            generationActions.classList.remove('hidden');
+            
+            // Display raw content for user review
+            if (typeof generatedContent === 'string') {
+                generationOutput.innerHTML = `<pre class="whitespace-pre-wrap">${generatedContent}</pre>`;
+            } else {
+                generationOutput.innerHTML = `<pre class="whitespace-pre-wrap">${JSON.stringify(generatedContent, null, 2)}</pre>`;
+            }
+
+            // Suggest loading based on inferred type
+            loadVocabBtn.classList.add('hidden');
+            loadDialoguesBtn.classList.add('hidden');
+            loadGrammarBtn.classList.add('hidden');
+
+            if (inferredType === 'vocabulary') loadVocabBtn.classList.remove('hidden');
+            else if (inferredType === 'dialogues') loadDialoguesBtn.classList.remove('hidden');
+            else if (inferredType === 'grammarExamples') loadGrammarBtn.classList.remove('hidden');
+            else { // If inference was ambiguous, show all options
+                loadVocabBtn.classList.remove('hidden');
+                loadDialoguesBtn.classList.remove('hidden');
+                loadGrammarBtn.classList.remove('hidden');
+            }
+        }
+    });
+
+    luckyBtn.addEventListener('click', async () => {
+        const existingContent = {
+            vocabulary: vocabularyData.map(item => item.englishTranslation),
+            dialogues: dialoguesData.map(item => item.englishTranslation),
+            grammarExamples: grammarData.map(item => item.englishTranslation)
+        };
+        const prompt = `Based on the user's existing learning library (Vocabulary: ${existingContent.vocabulary.join(', ')}, Dialogues: ${existingContent.dialogues.join(', ')}, Grammar Examples: ${existingContent.grammarExamples.join(', ')}), suggest 3 new content ideas for conversational Hyderabadi Urdu. Focus on topics that would naturally follow or expand on what they already know, or fill gaps. Provide only the suggestions as a JSON array of strings.`;
+        
+        const schema = {
+            type: "ARRAY",
+            items: { "type": "STRING" }
+        };
+
+        const ideas = await callGeminiAPI(prompt, schema);
+        if (ideas && Array.isArray(ideas)) {
+            generationOutput.classList.remove('hidden');
+            generationActions.classList.add('hidden'); // No load buttons for ideas
+            generationOutput.innerHTML = `
+                <h4 class="font-semibold mb-2">Content Ideas for You:</h4>
+                <ul class="list-disc list-inside">
+                    ${ideas.map(idea => `<li>${idea}</li>`).join('')}
+                </ul>
+                <p class="mt-4 text-sm text-gray-600">Copy an idea into the prompt box and click 'Generate'!</p>
+            `;
+        }
+    });
+
+    loadVocabBtn.addEventListener('click', async () => {
+        if (generatedContentCache.length === 0) {
+            showMessageModal('No Content', 'No generated content to load.', 'OK');
+            return;
+        }
+        showConfirmationModal('Load to Vocabulary', 'Enter a Batch Name for these vocabulary items:', async (batchName) => {
+            if (batchName) {
+                await addGeneratedContentToFirestore(generatedContentCache, 'vocabulary', batchName);
+            } else {
+                showMessageModal('Missing Input', 'Batch Name is required.', 'OK');
+            }
+        }, true); // Pass true for text input confirmation
+    });
+
+    loadDialoguesBtn.addEventListener('click', async () => {
+        if (generatedContentCache.length === 0) {
+            showMessageModal('No Content', 'No generated content to load.', 'OK');
+            return;
+        }
+        showConfirmationModal('Load to Dialogues', 'Enter a Batch Name for these dialogues:', async (batchName) => {
+            if (batchName) {
+                await addGeneratedContentToFirestore(generatedContentCache, 'dialogues', batchName);
+            } else {
+                showMessageModal('Missing Input', 'Batch Name is required.', 'OK');
+            }
+        }, true);
+    });
+
+    loadGrammarBtn.addEventListener('click', async () => {
+        if (generatedContentCache.length === 0) {
+            showMessageModal('No Content', 'No generated content to load.', 'OK');
+            return;
+        }
+        showConfirmationModal('Load to Grammar', 'Enter a Batch Name for these grammar examples:', async (batchName) => {
+            if (batchName) {
+                await addGeneratedContentToFirestore(generatedContentCache, 'grammarExamples', batchName);
+            } else {
+                showMessageModal('Missing Input', 'Batch Name is required.', 'OK');
+            }
+        }, true);
+    });
+
+    // --- QUIZLET EXPORT ---
+    function exportToQuizlet(tab) {
+        let itemsToExport = [];
+        const checkboxes = document.querySelectorAll('.item-select-checkbox');
+        const selectedCheckboxes = Array.from(checkboxes).filter(cb => cb.checked);
+
+        if (selectedCheckboxes.length > 0) {
+            itemsToExport = selectedCheckboxes.map(cb => {
+                const row = cb.closest('tr');
+                const itemId = row.dataset.id;
+                let dataArray;
+                if (tab === 'vocabulary') dataArray = vocabularyData;
+                else if (tab === 'dialogues') dataArray = dialoguesData;
+                else if (tab === 'grammar') dataArray = grammarData;
+                return dataArray.find(item => item.id === itemId);
+            }).filter(Boolean); // Remove any undefined if item not found
+        } else {
+            // If no items are checked, prompt to export all currently filtered items (not yet implemented filtering)
+            // For now, it will export all items in the current tab's data
+            showConfirmationModal('Export All?', `No specific items selected. Do you want to export all ${tab} items?`, () => {
+                if (tab === 'vocabulary') itemsToExport = vocabularyData;
+                else if (tab === 'dialogues') itemsToExport = dialoguesData;
+                else if (tab === 'grammar') itemsToExport = grammarData;
+                performQuizletExport(itemsToExport);
+            });
+            return; // Exit here, actual export happens in confirmation callback
+        }
+        performQuizletExport(itemsToExport);
+    }
+
+    function performQuizletExport(items) {
+        if (items.length === 0) {
+            showMessageModal('No Items', 'No items to export.', 'OK');
+            return;
+        }
+
+        let exportString = items.map(item => {
+            const english = item.englishTranslation || '';
+            const urdu = item.urduScriptTransliteration || '';
+            const phonetic = item.phoneticHints || '';
+            const grammar = item.grammarNotes ? `// ${item.grammarNotes}` : '';
+            const contextual = item.contextualUsageNotes ? `// ${item.contextualUsageNotes}` : '';
+
+            // Replace internal newlines with // for Quizlet compatibility
+            const definition = `${urdu} // ${phonetic} ${grammar} ${contextual}`.trim().replace(/\n/g, ' // ').replace(/\s\s+/g, ' ');
+
+            return `${english} | ${definition}`;
+        }).join('\n');
+
+        try {
+            const textarea = document.createElement('textarea');
+            textarea.value = exportString;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            showMessageModal('Export Successful', 'Content copied to clipboard! Go to Quizlet and use the "Import" feature.', 'OK');
+        } catch (err) {
+            showMessageModal('Export Error', 'Failed to copy to clipboard. Please try manually copying the content.', 'OK');
+            console.error('Clipboard copy failed:', err);
+        }
+    }
+
+    // --- CUSTOM MODALS (replacing alert/confirm) ---
+    const confirmationModal = document.getElementById('confirmation-modal');
+    const confirmationTitle = document.getElementById('confirmation-title');
+    const confirmationMessage = document.getElementById('confirmation-message');
+    const confirmYesBtn = document.getElementById('confirm-yes');
+    const confirmNoBtn = document.getElementById('confirm-no');
+    const closeConfirmationModalX = document.getElementById('close-confirmation-modal');
+
+    const messageModal = document.getElementById('message-modal');
+    const messageTitle = document.getElementById('message-title');
+    const messageContent = document.getElementById('message-content');
+    const closeMessageModalBtn = document.getElementById('close-message-modal');
+    const closeMessageModalX = document.getElementById('close-message-modal-x');
+
+    let confirmationCallback = null;
+    let confirmationInput = null;
+
+    function showConfirmationModal(title, message, callback, withInput = false) {
+        confirmationTitle.innerText = title;
+        confirmationMessage.innerText = message;
+        confirmationCallback = callback;
+
+        if (withInput) {
+            confirmationInput = document.createElement('input');
+            confirmationInput.type = 'text';
+            confirmationInput.placeholder = 'Enter Batch Name';
+            confirmationInput.className = 'w-full p-3 mb-4 border rounded-lg';
+            confirmationMessage.parentNode.insertBefore(confirmationInput, confirmationMessage.nextSibling);
+            confirmationInput.focus();
+        } else {
+            if (confirmationInput && confirmationInput.parentNode) {
+                confirmationInput.parentNode.removeChild(confirmationInput);
+                confirmationInput = null;
+            }
+        }
+
+        confirmationModal.style.display = 'flex';
+    }
+
+    confirmYesBtn.addEventListener('click', () => {
+        confirmationModal.style.display = 'none';
+        if (confirmationCallback) {
+            if (confirmationInput) {
+                confirmationCallback(confirmationInput.value);
+            } else {
+                confirmationCallback(true);
+            }
+        }
+        confirmationCallback = null;
+        if (confirmationInput && confirmationInput.parentNode) {
+            confirmationInput.parentNode.removeChild(confirmationInput);
+            confirmationInput = null;
+        }
+    });
+
+    confirmNoBtn.addEventListener('click', () => {
+        confirmationModal.style.display = 'none';
+        confirmationCallback = null;
+        if (confirmationInput && confirmationInput.parentNode) {
+            confirmationInput.parentNode.removeChild(confirmationInput);
+            confirmationInput = null;
+        }
+    });
+
+    closeConfirmationModalX.addEventListener('click', () => {
+        confirmationModal.style.display = 'none';
+        confirmationCallback = null;
+        if (confirmationInput && confirmationInput.parentNode) {
+            confirmationInput.parentNode.removeChild(confirmationInput);
+            confirmationInput = null;
+        }
+    });
+
+    function showMessageModal(title, message, buttonText) {
+        messageTitle.innerText = title;
+        messageContent.innerText = message;
+        closeMessageModalBtn.innerText = buttonText;
+        messageModal.style.display = 'flex';
+    }
+
+    closeMessageModalBtn.addEventListener('click', () => {
+        messageModal.style.display = 'none';
+    });
+    closeMessageModalX.addEventListener('click', () => {
+        messageModal.style.display = 'none';
+    });
+
+    // --- INITIALIZATION ---
+    document.addEventListener('DOMContentLoaded', initializeFirebase);
+</script>
+</body>
+</html>
