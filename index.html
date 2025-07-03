@@ -4,29 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hyderabadi Urdu Learning Assistant</title>
+    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for data visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Chosen Palette: "Warm Neutral Harmony" -->
-    <!-- Application Structure Plan: A task-oriented, single-page application design with a fixed sidebar for primary navigation and a main content area that dynamically displays different views. The structure is designed to follow the user's core workflow: 1) Dashboard (Home) for a quick overview of progress. 2) Generate Content for AI-powered creation. 3) My Library (with tabs for Vocabulary, Dialogues, Grammar) for curation, editing, and practice. 4) A dedicated Flashcard mode. This non-linear, task-based architecture was chosen over a report-like structure to give the user immediate access to the tools they need most, enhancing usability and efficiency for a busy learner. -->
-    <!-- Visualization & Content Choices: 
-        - Report Info: Learning Progress (Mastery Levels). Goal: Inform. Viz: Donut Chart (Chart.js). Interaction: Hover for details. Justification: Provides an immediate, easy-to-digest visual summary of the user's overall progress.
-        - Report Info: Content totals (Vocab, Dialogues, etc.). Goal: Compare. Viz: Bar Chart (Chart.js). Interaction: Hover for exact counts. Justification: Quickly communicates the volume of content in each learning module.
-        - Report Info: Vocabulary, Dialogues, Grammar Libraries. Goal: Organize & Inform. Viz: Interactive HTML Tables. Interaction: Filtering by batch/mastery, inline editing, mastery updates, selection for export. Justification: This is the core "workbench" feature. A table provides a dense, scannable view, and the interactions support the primary curation workflow.
-        - Report Info: Vocabulary Practice. Goal: Practice/Recall. Viz: HTML/CSS Flashcard Modal. Interaction: Click to flip, next/prev navigation, shuffle. Justification: Provides a simple, effective in-app practice session without the need to immediately export to Quizlet.
-    -->
-    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <!-- Google Fonts for Urdu script (Noto Nastaliq Urdu) and general text (Inter) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Nastaliq+Urdu&display=swap" rel="stylesheet">
+    
+    <!-- Custom Styles -->
     <style>
         body { font-family: 'Inter', sans-serif; }
         .sidebar-icon { font-size: 1.25rem; }
+        /* Active navigation link styling */
         .active-nav { background-color: #E5E7EB; color: #1F2937; }
+        /* Specific font for Urdu text */
         .urdu-text { font-family: 'Noto Nastaliq Urdu', serif; font-size: 1.2rem; }
-        .modal { display: none; }
+        /* Modal base styling (hidden by default) */
+        .modal { display: none; z-index: 1000; /* Ensure modals are on top */ }
+        /* Flashcard 3D effect container */
         .flashcard-container { perspective: 1000px; }
+        /* Flashcard inner element for flip animation */
         .flashcard { transform-style: preserve-3d; transition: transform 0.6s; }
+        /* Class to trigger the flip animation */
         .flashcard.is-flipped { transform: rotateY(180deg); }
+        /* Common styling for flashcard faces */
         .flashcard-face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+        /* Back face rotation */
         .flashcard-back { transform: rotateY(180deg); }
+        /* Chart container for responsive sizing */
         .chart-container {
             position: relative;
             width: 100%;
@@ -36,10 +43,28 @@
             height: 300px; /* Base height */
             max-height: 400px;
         }
+        /* Responsive height for charts on medium screens */
         @media (min-width: 768px) {
             .chart-container {
                 height: 350px;
             }
+        }
+
+        /* Sidebar collapse styles */
+        .sidebar-collapsed {
+            width: 20px; /* Collapsed width */
+            overflow: hidden;
+            transition: width 0.3s ease-in-out;
+        }
+        .sidebar-collapsed .md\:inline {
+            display: none !important; /* Force hide text */
+        }
+        .sidebar-collapsed .sidebar-icon {
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .sidebar-collapsed .sidebar-toggle-btn .fa-chevron-left {
+            transform: rotate(180deg);
         }
     </style>
 </head>
@@ -47,18 +72,24 @@
 
     <div class="flex h-screen">
         <!-- Sidebar Navigation -->
-        <aside class="w-20 md:w-64 bg-white border-r flex flex-col">
-            <div class="h-16 flex items-center justify-center border-b">
+        <aside id="sidebar" class="w-20 md:w-64 bg-white border-r flex flex-col transition-all duration-300 ease-in-out">
+            <!-- App Logo and Title -->
+            <div class="h-16 flex items-center justify-center border-b relative">
                 <i class="fas fa-book-open-reader text-2xl text-teal-600"></i>
                 <span class="hidden md:inline ml-3 text-lg font-bold">Urdu Assistant</span>
+                <!-- Sidebar Toggle Button -->
+                <button id="sidebar-toggle-btn" class="absolute right-0 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-gray-100 hidden md:block">
+                    <i class="fas fa-chevron-left text-gray-500 transition-transform duration-300 ease-in-out"></i>
+                </button>
             </div>
+            <!-- Main Navigation Links -->
             <nav class="flex-1 px-2 md:px-4 py-4 space-y-2">
                 <a href="#dashboard" class="flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100 nav-link active-nav">
                     <i class="fas fa-chart-pie sidebar-icon"></i>
                     <span class="hidden md:inline ml-4 font-medium">Dashboard</span>
                 </a>
                 <a href="#generate" class="flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100 nav-link">
-                    <i class="fas fa-magic-sparkles sidebar-icon"></i>
+                    <i class="fas fa-magic-sparkles sidebar-icon text-teal-600"></i> <!-- Added text-teal-600 -->
                     <span class="hidden md:inline ml-4 font-medium">Generate Content</span>
                 </a>
                 <a href="#library" class="flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100 nav-link">
@@ -66,14 +97,15 @@
                     <span class="hidden md:inline ml-4 font-medium">My Library</span>
                 </a>
             </nav>
+            <!-- Authentication Section -->
             <div class="px-2 md:px-4 py-4 border-t">
                  <div id="auth-container" class="space-y-2">
-                     <!-- Auth content will be injected here -->
+                     <!-- Auth content will be injected here by JavaScript -->
                  </div>
             </div>
         </aside>
 
-        <!-- Main Content -->
+        <!-- Main Content Area -->
         <main class="flex-1 p-4 md:p-8 overflow-y-auto">
             
             <!-- Dashboard View -->
@@ -81,10 +113,12 @@
                 <h1 class="text-3xl font-bold text-gray-800 mb-2">Dashboard</h1>
                 <p class="text-gray-600 mb-8">Welcome back! Here's a snapshot of your learning journey.</p>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Total Items Chart -->
                     <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm">
                         <h3 class="text-lg font-semibold mb-4">Total Items in Library</h3>
                         <div class="chart-container h-64 md:h-80"><canvas id="progressChart"></canvas></div>
                     </div>
+                    <!-- Mastery Levels Chart -->
                     <div class="bg-white p-6 rounded-xl shadow-sm">
                          <h3 class="text-lg font-semibold mb-4">Mastery Levels</h3>
                          <div class="chart-container h-64 md:h-80"><canvas id="masteryChart"></canvas></div>
@@ -97,24 +131,31 @@
                  <h1 class="text-3xl font-bold text-gray-800 mb-2">Generate New Content</h1>
                  <p class="text-gray-600 mb-8">Use the power of AI to create custom learning materials. Describe what you need below.</p>
                  <div class="bg-white p-6 rounded-xl shadow-sm">
+                    <!-- Prompt Input Area -->
                     <textarea id="prompt-input" rows="5" class="w-full p-3 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" placeholder="e.g., 'Give me 10 words about kitchen items with phonetic notes' or 'Provide 5 sentences for talking to a child about bedtime.'"></textarea>
                     <div class="flex flex-wrap items-center justify-between mt-4 gap-4">
+                        <!-- Generate Button -->
                         <button id="generate-btn" class="bg-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-teal-700 transition-colors">
                             <i class="fas fa-magic-sparkles mr-2"></i>Generate
                         </button>
+                        <!-- I'm Feeling Lucky Button -->
                          <button id="lucky-btn" class="bg-gray-200 text-gray-700 px-6 py-2 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
-                            <i class="fas fa-dice mr-2"></i>I'm Feeling Lucky
-                        </button>
+                             <i class="fas fa-dice mr-2"></i>I'm Feeling Lucky
+                         </button>
                     </div>
+                    <!-- AI Generation Output Area -->
                     <div id="generation-output" class="mt-6 p-4 border-l-4 border-teal-500 bg-teal-50 hidden"></div>
+                    <!-- Loading Indicator -->
                     <div id="generation-loading" class="mt-6 hidden flex items-center justify-center">
                         <i class="fas fa-spinner fa-spin text-teal-600 text-3xl"></i>
                         <span class="ml-3 text-gray-600">Generating content...</span>
                     </div>
+                    <!-- Actions after generation (Load to Library buttons) -->
                     <div id="generation-actions" class="mt-4 flex flex-wrap gap-2 hidden">
                         <button id="load-vocab-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">Load to Vocabulary</button>
                         <button id="load-dialogues-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">Load to Dialogues</button>
                         <button id="load-grammar-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">Load to Grammar</button>
+                        <button id="export-generated-btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"><i class="fas fa-file-export mr-2"></i>Export Generated to Quizlet</button>
                     </div>
                  </div>
             </div>
@@ -141,6 +182,7 @@
     </div>
 
     <!-- Modals -->
+    <!-- Authentication Modal -->
     <div id="auth-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md relative">
             <h2 class="text-2xl font-bold mb-6 text-center">Sign In / Sign Up</h2>
@@ -154,6 +196,7 @@
         </div>
     </div>
     
+    <!-- Flashcard Modal -->
     <div id="flashcard-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
         <div class="w-full max-w-2xl relative">
             <div class="flashcard-container h-80">
@@ -171,11 +214,11 @@
         </div>
     </div>
 
-    <!-- Confirmation Modal -->
+    <!-- Confirmation Modal (custom replacement for window.confirm) -->
     <div id="confirmation-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm text-center relative">
-            <h2 id="confirmation-title" class="text-xl font-bold mb-4"></h2>
-            <p id="confirmation-message" class="text-gray-700 mb-6"></p>
+            <h2 id="confirmation-title" class="text-xl font-bold mb-4 text-black"></h2>
+            <p id="confirmation-message" class="text-gray-700 mb-6 text-black min-h-8"></p>
             <div class="flex justify-center gap-4">
                 <button id="confirm-yes" class="bg-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-teal-700">Yes</button>
                 <button id="confirm-no" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg font-semibold hover:bg-gray-400">No</button>
@@ -184,35 +227,40 @@
         </div>
     </div>
 
-    <!-- Message Modal -->
+    <!-- Message Modal (custom replacement for window.alert) -->
     <div id="message-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-2xl p-8 w-full max-w-sm text-center relative">
-            <h2 id="message-title" class="text-xl font-bold mb-4"></h2>
-            <p id="message-content" class="text-gray-700 mb-6"></p>
+            <h2 id="message-title" class="text-xl font-bold mb-4 text-black"></h2>
+            <p id="message-content" class="text-gray-700 mb-6 text-black min-h-8"></p>
             <button id="close-message-modal" class="bg-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-teal-700">OK</button>
             <button id="close-message-modal-x" class="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
         </div>
     </div>
 
 <script type="module">
+    // Firebase imports
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+    // Firebase instances
     let app;
     let db;
     let auth;
-    let currentUserId = null;
-    let isAuthReady = false;
+    let currentUserId = null; // Stores the current user's ID
+    let isAuthReady = false; // Flag to indicate if Firebase auth state is initialized
 
     // --- GLOBAL DATA STORES ---
+    // Arrays to hold data fetched from Firestore
     let vocabularyData = [];
     let dialoguesData = [];
     let grammarData = [];
-    let generatedContentCache = []; // To store content generated by AI before saving to Firestore
+    // Cache for content generated by AI before saving to Firestore
+    let generatedContentCache = []; 
 
     // --- CHART CONFIG ---
-    let progressChartInstance, masteryChartInstance;
+    let progressChartInstance, masteryChartInstance; // Chart.js instances
+    // Color palette for charts based on mastery levels
     const chartColors = {
         'Never Seen': '#9CA3AF',
         'Recognized': '#A78BFA',
@@ -221,32 +269,39 @@
         'Mastered': '#14B8A6',
         'Teaching Ready': '#F59E0B'
     };
-    const masteryLevels = Object.keys(chartColors);
+    const masteryLevels = Object.keys(chartColors); // Extract mastery level names
 
+    /**
+     * Creates or updates the progress bar chart showing total items in each library.
+     */
     function createProgressChart() {
         const ctx = document.getElementById('progressChart').getContext('2d');
-        if (progressChartInstance) progressChartInstance.destroy();
+        if (progressChartInstance) progressChartInstance.destroy(); // Destroy existing chart if any
         progressChartInstance = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: ['Vocabulary', 'Dialogues', 'Grammar'],
                 datasets: [{
                     label: 'Total Items',
-                    data: [vocabularyData.length, dialoguesData.length, grammarData.length],
-                    backgroundColor: ['#14B8A6', '#F59E0B', '#EF4444'],
+                    data: [vocabularyData.length, dialoguesData.length, grammarData.length], // Data from global stores
+                    backgroundColor: ['#14B8A6', '#F59E0B', '#EF4444'], // Custom colors
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true } }
+                plugins: { legend: { display: false } }, // Hide legend
+                scales: { y: { beginAtZero: true } } // Start Y-axis at zero
             }
         });
     }
 
+    /**
+     * Creates or updates the doughnut chart showing mastery levels for vocabulary.
+     */
     function createMasteryChart() {
         const ctx = document.getElementById('masteryChart').getContext('2d');
+        // Count items per mastery level
         const masteryCounts = vocabularyData.reduce((acc, item) => {
             acc[item.masteryLevel] = (acc[item.masteryLevel] || 0) + 1;
             return acc;
@@ -254,9 +309,9 @@
 
         const labels = Object.keys(masteryCounts);
         const data = Object.values(masteryCounts);
-        const backgroundColors = labels.map(label => chartColors[label] || '#CBD5E1');
+        const backgroundColors = labels.map(label => chartColors[label] || '#CBD5E1'); // Map mastery levels to colors
 
-        if (masteryChartInstance) masteryChartInstance.destroy();
+        if (masteryChartInstance) masteryChartInstance.destroy(); // Destroy existing chart if any
         masteryChartInstance = new Chart(ctx, {
             type: 'doughnut',
             data: {
@@ -273,7 +328,7 @@
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
-                        position: 'bottom',
+                        position: 'bottom', // Position legend at the bottom
                         labels: { padding: 15 }
                     }
                 }
@@ -282,42 +337,58 @@
     }
 
     // --- NAVIGATION & PAGE DISPLAY ---
-    const navLinks = document.querySelectorAll('.nav-link');
-    const pages = document.querySelectorAll('.page-content');
+    const navLinks = document.querySelectorAll('.nav-link'); // All sidebar navigation links
+    const pages = document.querySelectorAll('.page-content'); // All main content views
 
+    /**
+     * Shows the specified page and updates active navigation link.
+     * Also updates charts if the dashboard is shown.
+     * @param {string} pageId - The ID of the page to show (e.g., 'dashboard', 'generate').
+     */
     function showPage(pageId) {
-        pages.forEach(page => page.classList.add('hidden'));
-        document.getElementById(pageId).classList.remove('hidden');
+        pages.forEach(page => page.classList.add('hidden')); // Hide all pages
+        document.getElementById(pageId).classList.remove('hidden'); // Show the target page
 
         navLinks.forEach(link => {
             if (link.getAttribute('href') === `#${pageId}`) {
-                link.classList.add('active-nav');
+                link.classList.add('active-nav'); // Add active styling
             } else {
-                link.classList.remove('active-nav');
+                link.classList.remove('active-nav'); // Remove active styling
             }
         });
         
+        // Update charts or library content when relevant pages are shown
         if (pageId === 'dashboard' && isAuthReady) {
             createProgressChart();
             createMasteryChart();
         }
         if(pageId === 'library' && isAuthReady) {
+            // Simulate click on the first tab to render its content
             handleTabClick(document.querySelector('.library-tab'));
         }
     }
 
+    // Add click event listeners to navigation links
     navLinks.forEach(link => {
         link.addEventListener('click', (e) => {
-            e.preventDefault();
-            const pageId = e.currentTarget.getAttribute('href').substring(1);
+            e.preventDefault(); // Prevent default anchor link behavior
+            const pageId = e.currentTarget.getAttribute('href').substring(1); // Get page ID from href
             showPage(pageId);
         });
     });
 
     // --- LIBRARY TABS & CONTENT RENDERING ---
-    const libraryTabs = document.querySelectorAll('.library-tab');
-    const libraryContentArea = document.getElementById('library-content-area');
+    const libraryTabs = document.querySelectorAll('.library-tab'); // All library tab buttons
+    const libraryContentArea = document.getElementById('library-content-area'); // Area to inject tab content
 
+    // Filter state variables
+    let currentFilterBatch = 'All';
+    let currentFilterMastery = 'All';
+
+    /**
+     * Handles click events on library tabs, updates active tab styling, and renders content.
+     * @param {HTMLElement} targetTab - The tab button that was clicked.
+     */
     function handleTabClick(targetTab) {
         libraryTabs.forEach(t => {
             t.classList.remove('border-teal-500', 'text-teal-600');
@@ -326,40 +397,75 @@
         targetTab.classList.add('border-teal-500', 'text-teal-600');
         targetTab.classList.remove('border-transparent', 'text-gray-500');
 
-        renderLibraryContent(targetTab.dataset.tab);
+        // Reset filters when changing tabs
+        currentFilterBatch = 'All';
+        currentFilterMastery = 'All';
+
+        renderLibraryContent(targetTab.dataset.tab); // Render content based on data-tab attribute
     }
     
+    // Add click event listeners to library tabs
     libraryTabs.forEach(tab => tab.addEventListener('click', e => handleTabClick(e.target)));
 
+    /**
+     * Renders the content for the selected library tab (Vocabulary, Dialogues, or Grammar).
+     * Applies current filters before rendering.
+     * @param {string} tab - The name of the tab ('vocabulary', 'dialogues', 'grammar').
+     */
     async function renderLibraryContent(tab) {
-        let data, tableHeaders;
+        let rawData, tableHeaders;
         let collectionName;
 
+        // Determine which data and headers to use based on the selected tab
         if (tab === 'vocabulary') {
-            data = vocabularyData;
+            rawData = vocabularyData;
             tableHeaders = ['English', 'Urdu', 'Phonetics', 'Notes', 'Batch', 'Mastery', 'Actions'];
             collectionName = 'vocabulary';
         } else if (tab === 'dialogues') {
-            data = dialoguesData;
+            rawData = dialoguesData;
             tableHeaders = ['English', 'Urdu', 'Phonetics', 'Grammar', 'Notes', 'Batch', 'Mastery', 'Actions'];
             collectionName = 'dialogues';
         } else if (tab === 'grammar') {
-            data = grammarData;
+            rawData = grammarData;
             tableHeaders = ['English', 'Urdu', 'Phonetics', 'Grammar', 'Notes', 'Batch', 'Mastery', 'Actions'];
             collectionName = 'grammarExamples';
         } else {
-            data = [];
+            rawData = [];
             tableHeaders = [];
         }
 
+        // Apply filters
+        let filteredData = rawData.filter(item => {
+            const matchesBatch = currentFilterBatch === 'All' || item.batchName === currentFilterBatch;
+            const matchesMastery = currentFilterMastery === 'All' || item.masteryLevel === currentFilterMastery;
+            return matchesBatch && matchesMastery;
+        });
+
+        // Get unique batch names for filter dropdown
+        const uniqueBatchNames = ['All', ...new Set(rawData.map(item => item.batchName).filter(Boolean))];
+
         libraryContentArea.innerHTML = `
             <div class="bg-white p-6 rounded-xl shadow-sm">
-                <div class="flex flex-wrap gap-4 mb-4">
-                    <!-- Filter controls here (to be implemented later) -->
+                <div class="flex flex-wrap gap-4 mb-4 items-center">
+                    <!-- Filter by Batch -->
+                    <div>
+                        <label for="filter-batch" class="block text-sm font-medium text-gray-700">Filter by Batch:</label>
+                        <select id="filter-batch" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm rounded-md">
+                            ${uniqueBatchNames.map(batch => `<option value="${batch}" ${currentFilterBatch === batch ? 'selected' : ''}>${batch}</option>`).join('')}
+                        </select>
+                    </div>
+                    <!-- Filter by Mastery -->
+                    <div>
+                        <label for="filter-mastery" class="block text-sm font-medium text-gray-700">Filter by Mastery:</label>
+                        <select id="filter-mastery" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm rounded-md">
+                            ${['All', ...masteryLevels].map(level => `<option value="${level}" ${currentFilterMastery === level ? 'selected' : ''}>${level}</option>`).join('')}
+                        </select>
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-4 mb-4 items-center">
                     <button id="export-quizlet-btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 text-sm"><i class="fas fa-file-export mr-2"></i>Export to Quizlet</button>
-                    ${tab === 'vocabulary' ? `<button id="start-flashcards" class="bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-700 text-sm"><i class="far fa-clone mr-2"></i>Practice with Flashcards</button>` : ''}
+                    <!-- Flashcards button for all tabs -->
+                    <button id="start-flashcards" class="bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-700 text-sm" data-tab-type="${tab}"><i class="far fa-clone mr-2"></i>Practice with Flashcards</button>
                     <button id="add-custom-item-btn" class="bg-gray-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-700 text-sm"><i class="fas fa-plus mr-2"></i>Add Custom Item</button>
                 </div>
                 <div class="overflow-x-auto">
@@ -371,7 +477,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            ${data.map(item => `
+                            ${filteredData.map(item => `
                                 <tr class="bg-white border-b hover:bg-gray-50" data-id="${item.id}" data-collection="${collectionName}">
                                     <td class="px-6 py-4"><input type="checkbox" class="item-select-checkbox"></td>
                                     <td class="px-6 py-4" contenteditable="true" data-field="englishTranslation">${item.englishTranslation}</td>
@@ -390,13 +496,14 @@
                                     </td>
                                 </tr>
                             `).join('')}
-                            ${data.length === 0 ? `<tr><td colspan="${tableHeaders.length + 1}" class="text-center py-8">No items in this library yet.</td></tr>` : ''}
+                            ${filteredData.length === 0 ? `<tr><td colspan="${tableHeaders.length + 1}" class="text-center py-8">No items matching current filters in this library yet.</td></tr>` : ''}
                         </tbody>
                     </table>
                 </div>
             </div>
         `;
         
+        // Add event listeners for new elements in the rendered table
         document.getElementById('select-all-items').addEventListener('change', (e) => {
             document.querySelectorAll('.item-select-checkbox').forEach(checkbox => {
                 checkbox.checked = e.target.checked;
@@ -433,13 +540,25 @@
             });
         });
 
+        // Event listener for Flashcards button (now available for all tabs)
         const startFlashcardsBtn = document.getElementById('start-flashcards');
         if(startFlashcardsBtn) {
-            startFlashcardsBtn.addEventListener('click', () => showFlashcardModal());
+            startFlashcardsBtn.addEventListener('click', (e) => showFlashcardModal(e.currentTarget.dataset.tabType));
         }
 
+        // Event listeners for export and add custom item buttons
         document.getElementById('export-quizlet-btn').addEventListener('click', () => exportToQuizlet(tab));
         document.getElementById('add-custom-item-btn').addEventListener('click', () => showMessageModal('Add Custom Item', 'This feature is coming soon!', 'OK')); // Placeholder
+
+        // Add event listeners for filter dropdowns
+        document.getElementById('filter-batch').addEventListener('change', (e) => {
+            currentFilterBatch = e.target.value;
+            renderLibraryContent(tab); // Re-render with new filter
+        });
+        document.getElementById('filter-mastery').addEventListener('change', (e) => {
+            currentFilterMastery = e.target.value;
+            renderLibraryContent(tab); // Re-render with new filter
+        });
     }
 
     // --- FLASHCARD MODAL ---
@@ -449,62 +568,105 @@
     const flashcardBack = document.getElementById('flashcard-back');
     
     let currentFlashcardIndex = 0;
-    let shuffledIndices = [];
+    let shuffledIndices = []; // To keep track of shuffled order for flashcards
+    let activeFlashcardData = []; // Stores the data for the current flashcard session
+    let activeFlashcardType = ''; // Stores the type of data ('vocabulary', 'dialogues', 'grammar')
 
-    function showFlashcardModal() {
-        if(vocabularyData.length === 0) {
-            showMessageModal('No Vocabulary', 'Please add some vocabulary items to practice flashcards.', 'OK');
+    /**
+     * Displays the flashcard modal and initializes flashcard data based on type.
+     * @param {string} type - The type of content for flashcards ('vocabulary', 'dialogues', 'grammar').
+     */
+    function showFlashcardModal(type) {
+        activeFlashcardType = type;
+        if (type === 'vocabulary') {
+            activeFlashcardData = vocabularyData;
+        } else if (type === 'dialogues') {
+            activeFlashcardData = dialoguesData;
+        } else if (type === 'grammar') {
+            activeFlashcardData = grammarData;
+        }
+
+        if(activeFlashcardData.length === 0) {
+            showMessageModal('No Items', `Please add some ${type} items to practice flashcards.`, 'OK');
             return;
         }
-        shuffledIndices = vocabularyData.map((_, i) => i);
+        shuffledIndices = activeFlashcardData.map((_, i) => i); // Initialize indices
         currentFlashcardIndex = 0;
-        updateFlashcard();
-        flashcardModal.style.display = 'flex';
+        updateFlashcard(); // Display the first flashcard
+        flashcardModal.style.display = 'flex'; // Show the modal
     }
     
+    /**
+     * Updates the content of the flashcard based on the current index and active type.
+     * Can also shuffle the flashcards.
+     * @param {boolean} [isShuffle=false] - Whether to shuffle the flashcards before updating.
+     */
     function updateFlashcard(isShuffle = false) {
         if(isShuffle) {
+             // Fisher-Yates shuffle algorithm
              for (let i = shuffledIndices.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [shuffledIndices[i], shuffledIndices[j]] = [shuffledIndices[j], shuffledIndices[i]];
-            }
-            currentFlashcardIndex = 0;
+                 const j = Math.floor(Math.random() * (i + 1));
+                 [shuffledIndices[i], shuffledIndices[j]] = [shuffledIndices[j], shuffledIndices[i]];
+             }
+             currentFlashcardIndex = 0; // Reset to the first card after shuffling
         }
 
-        const item = vocabularyData[shuffledIndices[currentFlashcardIndex]];
-        flashcardFront.innerHTML = `<h2 class="text-4xl font-bold">${item.englishTranslation}</h2>`;
-        flashcardBack.innerHTML = `
+        const item = activeFlashcardData[shuffledIndices[currentFlashcardIndex]];
+        if (!item) {
+            flashcardFront.innerHTML = `<h2 class="text-2xl font-bold text-gray-500">No content available.</h2>`;
+            flashcardBack.innerHTML = ``;
+            return;
+        }
+
+        flashcardFront.innerHTML = `<h2 class="text-4xl font-bold">${item.englishTranslation || 'N/A'}</h2>`;
+        
+        let backContent = `
             <div>
-                <h3 class="text-3xl font-bold mb-4 urdu-text">${item.urduScriptTransliteration}</h3>
-                <p class="text-gray-600"><strong>Phonetics:</strong> ${item.phoneticHints}</p>
-                <p class="text-gray-600 mt-2"><strong>Notes:</strong> ${item.contextualUsageNotes}</p>
-            </div>`;
-        flashcardInner.classList.remove('is-flipped');
+                <h3 class="text-3xl font-bold mb-4 urdu-text">${item.urduScriptTransliteration || 'N/A'}</h3>
+                <p class="text-gray-600"><strong>Phonetics:</strong> ${item.phoneticHints || 'N/A'}</p>
+        `;
+        if (activeFlashcardType !== 'vocabulary') { // Dialogues and Grammar have grammarNotes
+            backContent += `<p class="text-gray-600 mt-2"><strong>Grammar:</strong> ${item.grammarNotes || 'N/A'}</p>`;
+        }
+        backContent += `
+                <p class="text-gray-600 mt-2"><strong>Notes:</strong> ${item.contextualUsageNotes || 'N/A'}</p>
+            </div>
+        `;
+        flashcardBack.innerHTML = backContent;
+
+        flashcardInner.classList.remove('is-flipped'); // Ensure card is not flipped when new content loads
     }
     
+    // Event listeners for flashcard navigation
     document.getElementById('flashcard-next').addEventListener('click', () => {
-        currentFlashcardIndex = (currentFlashcardIndex + 1) % vocabularyData.length;
+        currentFlashcardIndex = (currentFlashcardIndex + 1) % activeFlashcardData.length;
         updateFlashcard();
     });
     
     document.getElementById('flashcard-prev').addEventListener('click', () => {
-        currentFlashcardIndex = (currentFlashcardIndex - 1 + vocabularyData.length) % vocabularyData.length;
+        currentFlashcardIndex = (currentFlashcardIndex - 1 + activeFlashcardData.length) % activeFlashcardData.length;
         updateFlashcard();
     });
     
     document.getElementById('flashcard-shuffle').addEventListener('click', () => {
-        updateFlashcard(true);
+        updateFlashcard(true); // Shuffle and update
     });
 
+    // Event listener to flip the flashcard on click
     flashcardInner.addEventListener('click', () => flashcardInner.classList.toggle('is-flipped'));
+    // Event listener to close the flashcard modal
     document.getElementById('close-flashcard-modal').addEventListener('click', () => flashcardModal.style.display = 'none');
 
     // --- AUTHENTICATION ---
     const authContainer = document.getElementById('auth-container');
     const authModal = document.getElementById('auth-modal');
 
+    /**
+     * Renders the authentication UI in the sidebar based on current user status.
+     */
     function renderAuthUI() {
         if (currentUserId) {
+            // User is signed in
             authContainer.innerHTML = `
                 <div class="flex items-center">
                     <i class="fas fa-user-circle text-2xl text-gray-500"></i>
@@ -519,6 +681,7 @@
                     <span class="hidden md:inline ml-4 font-medium">Sign Out</span>
                 </button>
             `;
+            // Add sign out event listener
             document.getElementById('signout-btn').addEventListener('click', async () => {
                 try {
                     await signOut(auth);
@@ -528,18 +691,21 @@
                 }
             });
         } else {
+            // User is not signed in (or is anonymous)
             authContainer.innerHTML = `
                 <button id="open-auth-modal-btn" class="w-full text-left flex items-center p-3 rounded-lg text-gray-600 hover:bg-gray-100">
                      <i class="fas fa-sign-in-alt sidebar-icon"></i>
                      <span class="hidden md:inline ml-4 font-medium">Sign In / Sign Up</span>
                 </button>
             `;
+            // Add event listener to open auth modal
             document.getElementById('open-auth-modal-btn').addEventListener('click', () => {
                 authModal.style.display = 'flex';
             });
         }
     }
     
+    // Event listeners for auth modal buttons
     document.getElementById('close-auth-modal').addEventListener('click', () => authModal.style.display = 'none');
     document.getElementById('signin-btn').addEventListener('click', async () => {
         const email = document.getElementById('email-input').value;
@@ -569,42 +735,52 @@
             authModal.style.display = 'none';
             showMessageModal('Signed Up', 'Account created successfully! You are now signed in.', 'OK');
         } catch (error) {
-            showMessageModal('Sign Up Error', `Error creating account: ${error.message}`, 'OK');
+            showMessageModal('Sign Up Error', `Error creating account: ${error.message}. Please ensure Email/Password sign-in is enabled in your Firebase project.`, 'OK');
         }
     });
 
     // --- FIREBASE INITIALIZATION & DATA FETCHING ---
+    /**
+     * Initializes Firebase app, Firestore, and Authentication.
+     * Sets up an auth state listener to manage user sessions and data fetching.
+     */
     async function initializeFirebase() {
+        // Retrieve app ID and Firebase config from global variables provided by the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
 
+        // Initialize Firebase services
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
 
+        // Listen for authentication state changes
         onAuthStateChanged(auth, async (user) => {
             if (user) {
-                currentUserId = user.uid;
+                currentUserId = user.uid; // Set current user ID
             } else {
                 // If no user is logged in, sign in anonymously
                 try {
                     await signInAnonymously(auth);
                 } catch (error) {
                     console.error("Error signing in anonymously:", error);
-                    showMessageModal('Authentication Error', `Failed to sign in anonymously: ${error.message}`, 'OK');
+                    // Only show modal if it's a genuine error, not just initial anonymous sign-in
+                    if (error.code !== 'auth/operation-not-allowed') { // Avoid showing for common anonymous setup case
+                        showMessageModal('Authentication Error', `Failed to sign in anonymously: ${error.message}`, 'OK');
+                    }
                 }
             }
-            isAuthReady = true;
-            renderAuthUI();
+            isAuthReady = true; // Mark auth as ready
+            renderAuthUI(); // Update UI based on auth state
             if (currentUserId) {
-                setupFirestoreListeners();
+                setupFirestoreListeners(); // Start listening to Firestore data
             }
             // Ensure the current page is rendered after auth is ready
             const currentPageId = document.querySelector('.nav-link.active-nav').getAttribute('href').substring(1);
             showPage(currentPageId);
         });
 
-        // Use __initial_auth_token if available
+        // Use __initial_auth_token if available for custom token sign-in
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             try {
                 await signInWithCustomToken(auth, __initial_auth_token);
@@ -615,47 +791,62 @@
                 await signInAnonymously(auth);
             }
         } else {
-            // If no initial token, proceed with anonymous sign-in via onAuthStateChanged
+            // If no initial token, the onAuthStateChanged listener will handle anonymous sign-in
         }
     }
 
+    /**
+     * Sets up real-time listeners for Firestore collections.
+     * Data is stored in global arrays (vocabularyData, dialoguesData, grammarData).
+     */
     function setupFirestoreListeners() {
-        if (!db || !currentUserId) return;
+        if (!db || !currentUserId) return; // Ensure Firebase and user ID are available
 
+        // Helper function to get the correct Firestore collection path
         const getCollectionPath = (collectionName) => `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`;
 
+        // Listen for changes in the 'vocabulary' collection
         onSnapshot(collection(db, getCollectionPath('vocabulary')), (snapshot) => {
             vocabularyData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Re-render library content or charts if the relevant page is active
             if (document.querySelector('.library-tab[data-tab="vocabulary"]').classList.contains('border-teal-500')) {
                 renderLibraryContent('vocabulary');
             }
             if (document.getElementById('dashboard').classList.contains('hidden') === false) {
-                 createProgressChart();
-                 createMasteryChart();
+                createProgressChart();
+                createMasteryChart();
             }
         });
 
+        // Listen for changes in the 'dialogues' collection
         onSnapshot(collection(db, getCollectionPath('dialogues')), (snapshot) => {
             dialoguesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             if (document.querySelector('.library-tab[data-tab="dialogues"]').classList.contains('border-teal-500')) {
                 renderLibraryContent('dialogues');
             }
             if (document.getElementById('dashboard').classList.contains('hidden') === false) {
-                 createProgressChart();
+                createProgressChart();
             }
         });
 
+        // Listen for changes in the 'grammarExamples' collection
         onSnapshot(collection(db, getCollectionPath('grammarExamples')), (snapshot) => {
             grammarData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             if (document.querySelector('.library-tab[data-tab="grammar"]').classList.contains('border-teal-500')) {
                 renderLibraryContent('grammar');
             }
             if (document.getElementById('dashboard').classList.contains('hidden') === false) {
-                 createProgressChart();
+                createProgressChart();
             }
         });
     }
 
+    /**
+     * Updates the mastery level of a specific item in Firestore.
+     * @param {string} collectionName - The name of the collection ('vocabulary', 'dialogues', 'grammarExamples').
+     * @param {string} itemId - The ID of the document to update.
+     * @param {string} newMasteryLevel - The new mastery level to set.
+     */
     async function updateItemMastery(collectionName, itemId, newMasteryLevel) {
         try {
             const itemRef = doc(db, `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`, itemId);
@@ -666,6 +857,13 @@
         }
     }
 
+    /**
+     * Updates a specific field of an item in Firestore.
+     * @param {string} collectionName - The name of the collection.
+     * @param {string} itemId - The ID of the document.
+     * @param {string} field - The field name to update.
+     * @param {any} newValue - The new value for the field.
+     */
     async function updateItemField(collectionName, itemId, field, newValue) {
         try {
             const itemRef = doc(db, `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`, itemId);
@@ -676,6 +874,11 @@
         }
     }
 
+    /**
+     * Deletes an item from a specified Firestore collection.
+     * @param {string} collectionName - The name of the collection.
+     * @param {string} itemId - The ID of the document to delete.
+     */
     async function deleteItem(collectionName, itemId) {
         try {
             const itemRef = doc(db, `/artifacts/${__app_id}/users/${currentUserId}/${collectionName}`, itemId);
@@ -686,6 +889,12 @@
         }
     }
 
+    /**
+     * Adds generated content to a specified Firestore collection, checking for duplicates.
+     * @param {Array<Object>} contentArray - An array of content objects to add.
+     * @param {string} collectionName - The target collection name.
+     * @param {string} batchName - The batch name to assign to the new items.
+     */
     async function addGeneratedContentToFirestore(contentArray, collectionName, batchName) {
         if (!currentUserId) {
             showMessageModal('Error', 'User not authenticated. Please sign in.', 'OK');
@@ -697,6 +906,7 @@
         let skippedCount = 0;
 
         for (const item of contentArray) {
+            // Check for duplicates based on English and Urdu translations
             const querySnapshot = await getDocs(query(
                 collectionRef,
                 where('englishTranslation', '==', item.englishTranslation),
@@ -704,6 +914,7 @@
             ));
 
             if (querySnapshot.empty) {
+                // Add new item with default metadata
                 const newItem = {
                     ...item,
                     batchName: batchName,
@@ -721,6 +932,7 @@
             }
         }
         showMessageModal('Content Loaded', `Added ${addedCount} new items. Skipped ${skippedCount} duplicates.`, 'OK');
+        // Hide generation output and actions after loading
         document.getElementById('generation-output').classList.add('hidden');
         document.getElementById('generation-actions').classList.add('hidden');
     }
@@ -735,11 +947,20 @@
     const loadVocabBtn = document.getElementById('load-vocab-btn');
     const loadDialoguesBtn = document.getElementById('load-dialogues-btn');
     const loadGrammarBtn = document.getElementById('load-grammar-btn');
+    const exportGeneratedBtn = document.getElementById('export-generated-btn');
 
+
+    /**
+     * Calls the Gemini API with a given prompt and optional schema for structured output.
+     * Handles loading states and error messages.
+     * @param {string} prompt - The text prompt for the AI.
+     * @param {Object|null} schema - Optional JSON schema for structured response.
+     * @returns {Promise<string|Object|null>} The generated content (string or parsed JSON), or null on error.
+     */
     async function callGeminiAPI(prompt, schema = null) {
-        generationLoading.classList.remove('hidden');
-        generationOutput.classList.add('hidden');
-        generationActions.classList.add('hidden');
+        generationLoading.classList.remove('hidden'); // Show loading indicator
+        generationOutput.classList.add('hidden'); // Hide previous output
+        generationActions.classList.add('hidden'); // Hide action buttons
 
         try {
             let chatHistory = [];
@@ -763,11 +984,12 @@
             });
             const result = await response.json();
 
+            // Check if the response structure is valid
             if (result.candidates && result.candidates.length > 0 &&
                 result.candidates[0].content && result.candidates[0].content.parts &&
                 result.candidates[0].content.parts.length > 0) {
                 const text = result.candidates[0].content.parts[0].text;
-                return schema ? JSON.parse(text) : text;
+                return schema ? JSON.parse(text) : text; // Parse JSON if schema was used, otherwise return raw text
             } else {
                 showMessageModal('Generation Error', 'Could not get a valid response from AI. Please try again.', 'OK');
                 return null;
@@ -776,10 +998,36 @@
             showMessageModal('API Error', `Error calling Gemini API: ${error.message}`, 'OK');
             return null;
         } finally {
-            generationLoading.classList.add('hidden');
+            generationLoading.classList.add('hidden'); // Hide loading indicator
         }
     }
 
+    /**
+     * Formats the generated content (array of objects) into a readable HTML list.
+     * @param {Array<Object>} content - The array of generated content objects.
+     * @returns {string} HTML string.
+     */
+    function formatGeneratedContentForDisplay(content) {
+        if (!Array.isArray(content) || content.length === 0) {
+            return `<p class="text-lg text-gray-700">No content generated or content is not in expected format.</p>`;
+        }
+
+        let html = '<ul class="list-disc list-inside space-y-4 text-lg text-gray-800">';
+        content.forEach((item, index) => {
+            html += `<li class="mb-4 p-3 border border-gray-200 rounded-lg bg-white shadow-sm">`;
+            html += `<h4 class="font-semibold text-teal-700 mb-1">Item ${index + 1}:</h4>`;
+            if (item.englishTranslation) html += `<p><strong>English:</strong> ${item.englishTranslation}</p>`;
+            if (item.urduScriptTransliteration) html += `<p><strong>Urdu:</strong> <span class="urdu-text text-xl font-bold">${item.urduScriptTransliteration}</span></p>`;
+            if (item.phoneticHints) html += `<p><strong>Phonetics:</strong> ${item.phoneticHints}</p>`;
+            if (item.grammarNotes) html += `<p><strong>Grammar:</strong> ${item.grammarNotes}</p>`;
+            if (item.contextualUsageNotes) html += `<p><strong>Notes:</strong> ${item.contextualUsageNotes}</p>`;
+            html += `</li>`;
+        });
+        html += '</ul>';
+        return html;
+    }
+
+    // Event listener for the "Generate" button
     generateBtn.addEventListener('click', async () => {
         const prompt = promptInput.value;
         if (!prompt) {
@@ -787,11 +1035,13 @@
             return;
         }
 
-        const basePrompt = `You are an expert in conversational Hyderabadi Urdu for home and family use. Prioritize less formal vocabulary where appropriate, but generate examples with formal sentence structures. Provide precise phonetic hints and concise grammar explanations for non-script learners. Avoid redundant phonetic descriptions. Based on the following request, generate content in JSON format.`;
+        // Base prompt for the AI, setting the persona and requirements
+        const basePrompt = `You are an expert in conversational Hyderabadi Urdu for home and family use. Prioritize less formal vocabulary where appropriate, but generate examples with formal sentence structures. Provide precise phonetic hints and concise grammar explanations for non-script learners. Avoid redundant phonetic descriptions. The 'urduScriptTransliteration' field must contain both the Urdu script and its transliteration, formatted as: 'اردو (Urdu)'. The 'phoneticHints' field should provide concise phonetic explanations, focusing on sounds challenging for English speakers. Include details on tongue/lip position, aspiration (e.g., 'a puff of air'), and comparisons to English sounds (e.g., 'like American English "d"'). Avoid redundant descriptions like 'X sounds like X in English' if the sound is identical. If the content demonstrates a grammar rule, the 'grammarNotes' field should concisely explain the rule shown in that specific phrase/sentence, aiming to clarify how the language behaves. The 'contextualUsageNotes' field should offer additional insights into how, when, or where a word/phrase is typically used, especially for nuanced meanings or synonyms. Based on the following request, generate content in JSON format.`;
 
         let schema;
-        let inferredType = 'vocabulary'; // Default inference
+        let inferredType = 'vocabulary'; // Default inference for loading buttons
 
+        // Infer content type and set appropriate JSON schema
         if (prompt.toLowerCase().includes('vocabulary') || prompt.toLowerCase().includes('words')) {
             schema = {
                 type: "ARRAY",
@@ -840,8 +1090,8 @@
             };
             inferredType = 'grammarExamples';
         } else {
-             // Fallback schema if type is unclear, let AI provide general text initially
-             schema = null; // AI will return plain text
+             // Fallback schema if type is unclear, AI will return plain text initially
+             schema = null; 
         }
 
         const fullPrompt = `${basePrompt}\n\nUser Request: ${prompt}`;
@@ -852,30 +1102,24 @@
             generationOutput.classList.remove('hidden');
             generationActions.classList.remove('hidden');
             
-            // Display raw content for user review
+            // Display formatted content for user review
             if (typeof generatedContent === 'string') {
-                generationOutput.innerHTML = `<pre class="whitespace-pre-wrap">${generatedContent}</pre>`;
+                generationOutput.innerHTML = `<pre class="whitespace-pre-wrap text-lg text-gray-800">${generatedContent}</pre>`; // Fallback for plain text
             } else {
-                generationOutput.innerHTML = `<pre class="whitespace-pre-wrap">${JSON.stringify(generatedContent, null, 2)}</pre>`;
+                generationOutput.innerHTML = formatGeneratedContentForDisplay(generatedContent);
             }
 
-            // Suggest loading based on inferred type
-            loadVocabBtn.classList.add('hidden');
-            loadDialoguesBtn.classList.add('hidden');
-            loadGrammarBtn.classList.add('hidden');
-
-            if (inferredType === 'vocabulary') loadVocabBtn.classList.remove('hidden');
-            else if (inferredType === 'dialogues') loadDialoguesBtn.classList.remove('hidden');
-            else if (inferredType === 'grammarExamples') loadGrammarBtn.classList.remove('hidden');
-            else { // If inference was ambiguous, show all options
-                loadVocabBtn.classList.remove('hidden');
-                loadDialoguesBtn.classList.remove('hidden');
-                loadGrammarBtn.classList.remove('hidden');
-            }
+            // Show all load buttons and the export generated button
+            loadVocabBtn.classList.remove('hidden');
+            loadDialoguesBtn.classList.remove('hidden');
+            loadGrammarBtn.classList.remove('hidden');
+            exportGeneratedBtn.classList.remove('hidden'); // Show export button for generated content
         }
     });
 
+    // Event listener for the "I'm Feeling Lucky" button
     luckyBtn.addEventListener('click', async () => {
+        // Prepare existing content summaries to help AI suggest relevant new ideas
         const existingContent = {
             vocabulary: vocabularyData.map(item => item.englishTranslation),
             dialogues: dialoguesData.map(item => item.englishTranslation),
@@ -883,6 +1127,7 @@
         };
         const prompt = `Based on the user's existing learning library (Vocabulary: ${existingContent.vocabulary.join(', ')}, Dialogues: ${existingContent.dialogues.join(', ')}, Grammar Examples: ${existingContent.grammarExamples.join(', ')}), suggest 3 new content ideas for conversational Hyderabadi Urdu. Focus on topics that would naturally follow or expand on what they already know, or fill gaps. Provide only the suggestions as a JSON array of strings.`;
         
+        // Schema for a JSON array of strings
         const schema = {
             type: "ARRAY",
             items: { "type": "STRING" }
@@ -893,15 +1138,16 @@
             generationOutput.classList.remove('hidden');
             generationActions.classList.add('hidden'); // No load buttons for ideas
             generationOutput.innerHTML = `
-                <h4 class="font-semibold mb-2">Content Ideas for You:</h4>
-                <ul class="list-disc list-inside">
+                <h4 class="font-semibold mb-2 text-xl text-teal-700">Content Ideas for You:</h4>
+                <ul class="list-disc list-inside space-y-2 text-lg text-gray-800">
                     ${ideas.map(idea => `<li>${idea}</li>`).join('')}
                 </ul>
-                <p class="mt-4 text-sm text-gray-600">Copy an idea into the prompt box and click 'Generate'!</p>
+                <p class="mt-4 text-base text-gray-600">Copy an idea into the prompt box and click 'Generate'!</p>
             `;
         }
     });
 
+    // Event listeners for loading generated content into Firestore
     loadVocabBtn.addEventListener('click', async () => {
         if (generatedContentCache.length === 0) {
             showMessageModal('No Content', 'No generated content to load.', 'OK');
@@ -944,37 +1190,63 @@
         }, true);
     });
 
-    // --- QUIZLET EXPORT ---
-    function exportToQuizlet(tab) {
-        let itemsToExport = [];
-        const checkboxes = document.querySelectorAll('.item-select-checkbox');
-        const selectedCheckboxes = Array.from(checkboxes).filter(cb => cb.checked);
-
-        if (selectedCheckboxes.length > 0) {
-            itemsToExport = selectedCheckboxes.map(cb => {
-                const row = cb.closest('tr');
-                const itemId = row.dataset.id;
-                let dataArray;
-                if (tab === 'vocabulary') dataArray = vocabularyData;
-                else if (tab === 'dialogues') dataArray = dialoguesData;
-                else if (tab === 'grammar') dataArray = grammarData;
-                return dataArray.find(item => item.id === itemId);
-            }).filter(Boolean); // Remove any undefined if item not found
-        } else {
-            // If no items are checked, prompt to export all currently filtered items (not yet implemented filtering)
-            // For now, it will export all items in the current tab's data
-            showConfirmationModal('Export All?', `No specific items selected. Do you want to export all ${tab} items?`, () => {
-                if (tab === 'vocabulary') itemsToExport = vocabularyData;
-                else if (tab === 'dialogues') itemsToExport = dialoguesData;
-                else if (tab === 'grammar') itemsToExport = grammarData;
-                performQuizletExport(itemsToExport);
-            });
-            return; // Exit here, actual export happens in confirmation callback
+    // Event listener for exporting generated content directly
+    exportGeneratedBtn.addEventListener('click', () => {
+        if (generatedContentCache.length === 0) {
+            showMessageModal('No Content', 'No generated content to export.', 'OK');
+            return;
         }
-        performQuizletExport(itemsToExport);
+        performQuizletExport(generatedContentCache);
+    });
+
+    // --- QUIZLET EXPORT ---
+    /**
+     * Exports selected or all items from the current library tab to Quizlet-compatible format.
+     * Copies the formatted string to the clipboard.
+     * @param {string} tab - The current active library tab ('vocabulary', 'dialogues', 'grammar').
+     */
+    function exportToQuizlet(tabOrData) {
+        let itemsToExport = [];
+        let isGeneratedContent = false;
+
+        if (typeof tabOrData === 'string') { // If it's a tab name
+            const checkboxes = document.querySelectorAll('.item-select-checkbox');
+            const selectedCheckboxes = Array.from(checkboxes).filter(cb => cb.checked);
+
+            if (selectedCheckboxes.length > 0) {
+                itemsToExport = selectedCheckboxes.map(cb => {
+                    const row = cb.closest('tr');
+                    const itemId = row.dataset.id;
+                    let dataArray;
+                    if (tabOrData === 'vocabulary') dataArray = vocabularyData;
+                    else if (tabOrData === 'dialogues') dataArray = dialoguesData;
+                    else if (tabOrData === 'grammar') dataArray = grammarData;
+                    return dataArray.find(item => item.id === itemId);
+                }).filter(Boolean);
+            } else {
+                // If no items are checked, prompt to export all items in the current tab
+                showConfirmationModal('Export All?', `No specific items selected. Do you want to export all ${tabOrData} items?`, () => {
+                    if (tabOrData === 'vocabulary') itemsToExport = vocabularyData;
+                    else if (tabOrData === 'dialogues') itemsToExport = dialoguesData;
+                    else if (tabOrData === 'grammar') itemsToExport = grammarData;
+                    performQuizletExport(itemsToExport);
+                });
+                return; 
+            }
+        } else { // If it's the generatedContentCache array
+            itemsToExport = tabOrData;
+            isGeneratedContent = true;
+        }
+        
+        performQuizletExportLogic(itemsToExport, isGeneratedContent);
     }
 
-    function performQuizletExport(items) {
+    /**
+     * Performs the actual Quizlet export logic.
+     * @param {Array<Object>} items - The array of items to export.
+     * @param {boolean} isGeneratedContent - True if exporting from generated content, false if from library.
+     */
+    function performQuizletExportLogic(items, isGeneratedContent) {
         if (items.length === 0) {
             showMessageModal('No Items', 'No items to export.', 'OK');
             return;
@@ -984,21 +1256,22 @@
             const english = item.englishTranslation || '';
             const urdu = item.urduScriptTransliteration || '';
             const phonetic = item.phoneticHints || '';
-            const grammar = item.grammarNotes ? `// ${item.grammarNotes}` : '';
-            const contextual = item.contextualUsageNotes ? `// ${item.contextualUsageNotes}` : '';
+            const grammar = item.grammarNotes ? `// Grammar: ${item.grammarNotes}` : ''; // Added "Grammar:" prefix
+            const contextual = item.contextualUsageNotes ? `// Notes: ${item.contextualUsageNotes}` : ''; // Added "Notes:" prefix
 
-            // Replace internal newlines with // for Quizlet compatibility
-            const definition = `${urdu} // ${phonetic} ${grammar} ${contextual}`.trim().replace(/\n/g, ' // ').replace(/\s\s+/g, ' ');
+            // Combine definition parts, replace newlines with double slashes, and clean up extra spaces
+            const definition = `${urdu} ${phonetic} ${grammar} ${contextual}`.trim().replace(/\n/g, ' // ').replace(/\s\s+/g, ' ').replace(/ {2,}/g, ' ').trim();
 
-            return `${english} | ${definition}`;
+            return `${english} | ${definition}`; // Quizlet format: term | definition
         }).join('\n');
 
         try {
+            // Create a temporary textarea to copy text to clipboard
             const textarea = document.createElement('textarea');
             textarea.value = exportString;
             document.body.appendChild(textarea);
             textarea.select();
-            document.execCommand('copy');
+            document.execCommand('copy'); // Deprecated but widely supported for iframes
             document.body.removeChild(textarea);
             showMessageModal('Export Successful', 'Content copied to clipboard! Go to Quizlet and use the "Import" feature.', 'OK');
         } catch (err) {
@@ -1021,72 +1294,94 @@
     const closeMessageModalBtn = document.getElementById('close-message-modal');
     const closeMessageModalX = document.getElementById('close-message-modal-x');
 
-    let confirmationCallback = null;
-    let confirmationInput = null;
+    let confirmationCallback = null; // Callback function for confirmation modal
+    let confirmationInput = null; // Input element for confirmation modal if needed
 
+    /**
+     * Displays a custom confirmation modal.
+     * @param {string} title - The title of the modal.
+     * @param {string} message - The message to display.
+     * @param {Function} callback - Callback function executed on 'Yes' click.
+     * @param {boolean} [withInput=false] - If true, adds a text input field.
+     */
     function showConfirmationModal(title, message, callback, withInput = false) {
         confirmationTitle.innerText = title;
         confirmationMessage.innerText = message;
         confirmationCallback = callback;
 
+        // Clear previous input if any
+        if (confirmationInput && confirmationInput.parentNode) {
+            confirmationInput.parentNode.removeChild(confirmationInput);
+            confirmationInput = null;
+        }
+
         if (withInput) {
+            // Create and insert input field if requested
             confirmationInput = document.createElement('input');
             confirmationInput.type = 'text';
             confirmationInput.placeholder = 'Enter Batch Name';
             confirmationInput.className = 'w-full p-3 mb-4 border rounded-lg';
             confirmationMessage.parentNode.insertBefore(confirmationInput, confirmationMessage.nextSibling);
-            confirmationInput.focus();
-        } else {
-            if (confirmationInput && confirmationInput.parentNode) {
-                confirmationInput.parentNode.removeChild(confirmationInput);
-                confirmationInput = null;
-            }
-        }
+            confirmationInput.focus(); // Focus on the input field
+        } 
 
-        confirmationModal.style.display = 'flex';
+        confirmationModal.style.display = 'flex'; // Show the modal
     }
 
+    // Event listener for 'Yes' button in confirmation modal
     confirmYesBtn.addEventListener('click', () => {
         confirmationModal.style.display = 'none';
         if (confirmationCallback) {
             if (confirmationInput) {
-                confirmationCallback(confirmationInput.value);
+                confirmationCallback(confirmationInput.value); // Pass input value to callback
             } else {
-                confirmationCallback(true);
+                confirmationCallback(true); // Pass true for simple confirmation
             }
         }
-        confirmationCallback = null;
+        confirmationCallback = null; // Reset callback
+        // Clean up input field
         if (confirmationInput && confirmationInput.parentNode) {
             confirmationInput.parentNode.removeChild(confirmationInput);
             confirmationInput = null;
         }
     });
 
+    // Event listener for 'No' button in confirmation modal
     confirmNoBtn.addEventListener('click', () => {
         confirmationModal.style.display = 'none';
-        confirmationCallback = null;
+        confirmationCallback = null; // Reset callback
+        // Clean up input field
         if (confirmationInput && confirmationInput.parentNode) {
             confirmationInput.parentNode.removeChild(confirmationInput);
             confirmationInput = null;
         }
     });
 
+    // Event listener for closing confirmation modal with 'X' button
     closeConfirmationModalX.addEventListener('click', () => {
         confirmationModal.style.display = 'none';
-        confirmationCallback = null;
+        confirmationCallback = null; // Reset callback
+        // Clean up input field
         if (confirmationInput && confirmationInput.parentNode) {
             confirmationInput.parentNode.removeChild(confirmationInput);
             confirmationInput = null;
         }
     });
 
+    /**
+     * Displays a custom message modal.
+     * @param {string} title - The title of the modal.
+     * @param {string} message - The message content.
+     * @param {string} buttonText - The text for the close button.
+     */
     function showMessageModal(title, message, buttonText) {
         messageTitle.innerText = title;
         messageContent.innerText = message;
         closeMessageModalBtn.innerText = buttonText;
-        messageModal.style.display = 'flex';
+        messageModal.style.display = 'flex'; // Show the modal
     }
 
+    // Event listeners for closing message modal
     closeMessageModalBtn.addEventListener('click', () => {
         messageModal.style.display = 'none';
     });
@@ -1094,8 +1389,21 @@
         messageModal.style.display = 'none';
     });
 
+    // --- SIDEBAR TOGGLE ---
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggleButton = document.getElementById('sidebar-toggle-btn');
+
+    sidebarToggleButton.addEventListener('click', () => {
+        sidebar.classList.toggle('sidebar-collapsed');
+        sidebarToggleButton.querySelector('i').classList.toggle('fa-chevron-left');
+        sidebarToggleButton.querySelector('i').classList.toggle('fa-chevron-right');
+    });
+
+
     // --- INITIALIZATION ---
+    // Initialize Firebase when the DOM is fully loaded
     document.addEventListener('DOMContentLoaded', initializeFirebase);
 </script>
 </body>
 </html>
+
