@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Urdu Content Generator V2.6</title>
+    <title>Urdu Content Generator V2.7</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Nastaliq+Urdu&display=swap" rel="stylesheet">
@@ -317,7 +317,7 @@
                         <button id="lucky-btn" class="btn btn-secondary"><i class="fas fa-dice mr-2"></i>I'm Feeling Lucky</button>
                     </div>
                 </div>
-                <div id="generation-loading" class="hidden mt-6 flex items-center justify-center"><i class="fas fa-spinner fa-spin text-teal-600 text-3xl"></i><span class="ml-3 text-gray-600">Generating...</span></div>
+                <div id="generation-loading" class="hidden mt-6 flex items-center justify-center"><i class="fas fa-spinner fa-spin text-teal-600 text-3xl"></i><span id="generation-loading-text" class="ml-3 text-gray-600">Generating...</span></div>
                 <div id="generation-output" class="hidden mt-6 p-4 border-l-4 border-teal-500 bg-teal-50"></div>
                 <div id="generation-actions" class="hidden mt-4 flex flex-wrap gap-2">
                     <button id="save-to-library-btn" class="btn btn-green text-sm"><i class="fas fa-save mr-2"></i>Save to Library</button>
@@ -800,52 +800,83 @@
     }
     
     async function callGeminiAPI(prompt, schema) {
-        document.getElementById('generation-loading').classList.remove('hidden');
+        const loadingContainer = document.getElementById('generation-loading');
+        const loadingText = document.getElementById('generation-loading-text');
+        
+        loadingText.textContent = 'Generating...';
+        loadingContainer.classList.remove('hidden');
         document.getElementById('generation-output').classList.add('hidden');
         document.getElementById('generation-actions').classList.add('hidden');
         
-        try {
-            // The key for the Gemini API call.
-            const apiKey = "AIzaSyByUcH76A__WLT4lqPfTSW4M0QQidHQTYE";
+        const maxRetries = 3;
+        let lastError = null;
 
-            if (!apiKey) {
-                throw new Error("API Key is not configured. Please add your Gemini API key to the callGeminiAPI function in the script.");
-            }
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                // The key for the Gemini API call.
+                const apiKey = "AIzaSyByUcH76A__WLT4lqPfTSW4M0QQidHQTYE";
 
-            const payload = { 
-                contents: [{ role: "user", parts: [{ text: prompt }] }],
-                generationConfig: { responseMimeType: "application/json", responseSchema: schema }
-            };
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                const errorBody = await response.json();
-                // Provide a more specific error message if the key is invalid
-                if (response.status === 400 && errorBody.error?.message.includes('API key not valid')) {
-                     throw new Error(`API Error: The provided API key is not valid. Please check your key and try again.`);
+                if (!apiKey || apiKey === "YOUR_API_KEY_HERE") {
+                    throw new Error("API Key is not configured. Please add your Gemini API key.");
                 }
-                throw new Error(`API Error: ${errorBody.error?.message || 'Unknown error'}`);
+
+                const payload = { 
+                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                    generationConfig: { responseMimeType: "application/json", responseSchema: schema }
+                };
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                // Check for overload/rate limit status codes
+                if ([429, 503].includes(response.status)) {
+                    const errorBody = await response.json();
+                    throw new Error(`The model is overloaded (status ${response.status}). Please try again later.`);
+                }
+
+                if (!response.ok) {
+                    const errorBody = await response.json();
+                    if (response.status === 400 && errorBody.error?.message.includes('API key not valid')) {
+                         throw new Error(`API Error: The provided API key is not valid. Please check your key and try again.`);
+                    }
+                    throw new Error(`API Error: ${errorBody.error?.message || 'Unknown error'}`);
+                }
+
+                const result = await response.json();
+                const rawTextResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!rawTextResponse) {
+                    throw new Error("The AI returned an empty or malformed response.");
+                }
+                
+                loadingContainer.classList.add('hidden');
+                return JSON.parse(rawTextResponse);
+
+            } catch (error) {
+                lastError = error;
+                console.warn(`Attempt ${attempt + 1} failed:`, error.message);
+
+                // Check if this is a retryable error (overloaded)
+                const isRetryable = error.message.includes('overloaded') || error.message.includes('503');
+                
+                if (isRetryable && attempt < maxRetries - 1) {
+                    const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+                    loadingText.textContent = `Model is busy. Retrying in ${delay / 1000}s...`;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    // Not a retryable error or max retries reached, so break the loop
+                    break;
+                }
             }
-
-            const result = await response.json();
-            const rawTextResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!rawTextResponse) throw new Error("The AI returned an empty or malformed response.");
-            
-            return JSON.parse(rawTextResponse);
-
-        } catch (error) {
-            console.error("Gemini API call failed:", error);
-            showMessageModal('Generation Failed', `An error occurred: ${error.message}. Please check the console for details.`);
-            return null;
-        } finally {
-            document.getElementById('generation-loading').classList.add('hidden');
         }
+        
+        // If the loop finished due to an error, show it
+        loadingContainer.classList.add('hidden');
+        showMessageModal('Generation Failed', `An error occurred: ${lastError.message}. Please check the console for details.`);
+        return null;
     }
 
     async function handleImFeelingLucky() {
