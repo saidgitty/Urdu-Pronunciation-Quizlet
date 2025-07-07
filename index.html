@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Urdu Content Generator V2.5</title>
+    <title>Urdu Content Generator V2.6</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Nastaliq+Urdu&display=swap" rel="stylesheet">
@@ -199,9 +199,9 @@
             const configInput = document.getElementById('firebase-config-input').value;
             const errorEl = document.getElementById('firebase-config-error');
             try {
-                // Handle if user pastes `const firebaseConfig = {..}` or just `{...}`
-                const jsonString = configInput.includes('=') ? configInput.split('=')[1].trim().replace(/;$/, '') : configInput;
-                const config = JSON.parse(jsonString);
+                // BUG FIX: Handle JavaScript object literal, not just strict JSON
+                const objectString = configInput.includes('=') ? configInput.split('=')[1].trim().replace(/;$/, '') : configInput;
+                const config = new Function(`return ${objectString}`)();
 
                 if (!config.apiKey || !config.authDomain || !config.projectId) {
                     throw new Error("Invalid config: apiKey, authDomain, and projectId are required.");
