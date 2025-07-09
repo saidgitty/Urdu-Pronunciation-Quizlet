@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Urdu Content Generator V2.7</title>
+    <title>Urdu Content Generator V2.8</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Nastaliq+Urdu&display=swap" rel="stylesheet">
@@ -834,7 +834,6 @@
                 
                 // Check for overload/rate limit status codes
                 if ([429, 503].includes(response.status)) {
-                    const errorBody = await response.json();
                     throw new Error(`The model is overloaded (status ${response.status}). Please try again later.`);
                 }
 
@@ -852,8 +851,40 @@
                     throw new Error("The AI returned an empty or malformed response.");
                 }
                 
-                loadingContainer.classList.add('hidden');
-                return JSON.parse(rawTextResponse);
+                // --- ROBUST JSON PARSING ---
+                try {
+                    return JSON.parse(rawTextResponse);
+                } catch (parseError) {
+                    console.warn("Initial JSON parse failed. Attempting to repair.", parseError);
+                    console.log("Raw response:", rawTextResponse);
+                    // Attempt to extract JSON from markdown code blocks
+                    const match = rawTextResponse.match(/```json\s*([\s\S]*?)\s*```/);
+                    const jsonText = match ? match[1] : rawTextResponse;
+                    
+                    // Find the first '[' or '{' and the last ']' or '}'
+                    const firstBracket = jsonText.indexOf('[');
+                    const firstBrace = jsonText.indexOf('{');
+                    
+                    let startIndex = -1;
+                    if (firstBracket === -1) startIndex = firstBrace;
+                    else if (firstBrace === -1) startIndex = firstBracket;
+                    else startIndex = Math.min(firstBracket, firstBrace);
+
+                    if (startIndex === -1) {
+                         throw new Error("Could not find start of JSON object or array in the AI response.");
+                    }
+
+                    const lastBracket = jsonText.lastIndexOf(']');
+                    const lastBrace = jsonText.lastIndexOf('}');
+                    const endIndex = Math.max(lastBracket, lastBrace);
+
+                    if (endIndex === -1) {
+                        throw new Error("Could not find end of JSON object or array in the AI response.");
+                    }
+
+                    const sanitizedJson = jsonText.substring(startIndex, endIndex + 1);
+                    return JSON.parse(sanitizedJson); // If this fails, the outer catch will handle it
+                }
 
             } catch (error) {
                 lastError = error;
